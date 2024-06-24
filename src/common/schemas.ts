@@ -19,6 +19,7 @@ const f = {
 };
 
 export const PreferencesSchema = z.object({
+	isPortable: z.boolean().optional(),
 	clientDir: z.string().optional(),
 	reopenLauncher: f.boolean(),
 	cleanWdb: f.boolean(true),
@@ -30,6 +31,8 @@ export const PreferencesSchema = z.object({
 			width: z.number(),
 			height: z.number()
 		})
-		.nullish()
+		.nullish(),
+	plusEnabled: f.boolean(false),
+	optionalPatches: z.array(z.string()).default([])
 });
 export type PreferencesSchema = z.infer<typeof PreferencesSchema>;

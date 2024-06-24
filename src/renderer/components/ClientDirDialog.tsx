@@ -14,6 +14,10 @@ type Props = { close: () => void };
 const ClientDirDialog = ({ close }: Props) => {
 	const { data: pref } = api.preferences.get.useQuery();
 	const setPref = api.preferences.set.useMutation();
+	const isValidClientDir = api.preferences.isValidClientDir.useQuery(
+		pref?.clientDir,
+		{ enabled: !!pref?.isPortable }
+	);
 
 	const verify = api.updater.verify.useMutation();
 
@@ -26,8 +30,8 @@ const ClientDirDialog = ({ close }: Props) => {
 		setError,
 		reset
 	} = useForm({
-		defaultValues: pref ?? {},
-		resolver: zodResolver(PreferencesSchema)
+		defaultValues: { clientDir: pref?.clientDir ?? '' },
+		resolver: zodResolver(PreferencesSchema.pick({ clientDir: true }))
 	});
 
 	// Form reset
@@ -35,13 +39,33 @@ const ClientDirDialog = ({ close }: Props) => {
 		pref && reset(pref);
 	}, [reset, pref]);
 
+	if (pref?.isPortable) {
+		return (
+			<form className="dialog">
+				<CloseButton close={close} />
+				<h2 className="color mb-2 text-xl">Install location</h2>
+				<p>
+					You are using the portable version of the launcher. Install location
+					is determined by the location of the launcher executable.
+				</p>
+				{!isValidClientDir.isLoading && !isValidClientDir.data && (
+					<p>
+						<span className="text-secondary">Error: </span>
+						WoW.exe not found in current folder. Please close the launcher and
+						move it to your WoW Wrath of the Lich King client directory.
+					</p>
+				)}
+			</form>
+		);
+	}
+
 	return (
 		<form
 			className="dialog"
-			onSubmit={handleSubmit(async v => {
+			onSubmit={handleSubmit(async ({ clientDir }) => {
 				try {
-					await setPref.mutateAsync(v);
-					await verify.mutateAsync();
+					await setPref.mutateAsync({ clientDir });
+					verify.mutateAsync();
 					close();
 				} catch (e) {
 					setError('clientDir', {

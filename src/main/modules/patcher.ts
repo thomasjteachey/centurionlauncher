@@ -8,10 +8,18 @@ import { isNotUndef } from '~common/utils';
 import Logger from '~main/modules/logger';
 
 export const patchConfig = async () => {
-	const { clientDir } = await Preferences.read();
+	const { clientDir, plusEnabled } = Preferences.data;
 	if (!clientDir) return;
 
+	// Patch WoW.exe
+	const exePath = path.join(clientDir, 'WoW.exe');
+	const buffer = await fs.readFile(exePath);
+	buffer.write(plusEnabled ? '12341' : '12340', 0x5f3a00, 6);
+	await fs.writeFile(exePath, buffer);
+
 	await fs.remove(path.join(clientDir, 'Data', 'enUs', 'realmlist.wtf'));
+	await fs.ensureDir(path.join(clientDir, 'WTF'));
+
 	const configPath = path.join(clientDir, 'WTF', 'Config.wtf');
 	const raw = (await fs.exists(configPath))
 		? await fs.readFile(configPath, { encoding: 'utf-8' })
@@ -30,6 +38,18 @@ export const patchConfig = async () => {
 
 	const primaryDisplay = screen.getPrimaryDisplay();
 	const { width, height } = primaryDisplay.bounds;
+
+	const realmInfo = plusEnabled
+		? {
+				realmList: 'centurionpvp.com',
+				patchList: 'centurionpvp.com',
+				realmName: 'Legionnaire Plus'
+		  }
+		: {
+				realmList: 'centurionpvp.com',
+				patchList: 'centurionpvp.com',
+				realmName: 'Legionnaire'
+		  };
 
 	const parsed = {
 		// Defaults
@@ -60,9 +80,7 @@ export const patchConfig = async () => {
 		// Parsed config
 		...configWtf,
 		// Realm list
-		realmList: '138.197.110.226',
-		patchList: '138.197.110.226',
-		realmName: 'Legionnaire',
+		...realmInfo,
 		// Mandatory
 		hwDetect: 0, // Skip hardware change detection
 		gxWindow: 1, // Maximized windowed mode

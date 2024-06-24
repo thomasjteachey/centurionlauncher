@@ -6,15 +6,15 @@ import { createIPCHandler } from 'electron-trpc/main';
 
 import icon from '~build/icon.png?asset';
 
-import { appRouter } from './api/root';
-import Logger from './modules/logger';
 import Preferences from './modules/preferences';
 import Updater from './modules/updater';
+import Logger from './modules/logger';
+import { appRouter } from './api/root';
 
 export let mainWindow: BrowserWindow | null = null;
 
 const createWindow = async () => {
-	const { rememberPosition, windowPosition } = await Preferences.read();
+	const { rememberPosition, windowPosition } = Preferences.data;
 
 	const position = rememberPosition
 		? windowPosition
@@ -53,7 +53,7 @@ const createWindow = async () => {
 		if (!mainWindow) return;
 		const [x = 0, y = 0] = mainWindow.getPosition();
 		const [width = 0, height = 0] = mainWindow.getSize();
-		await Preferences.write({ windowPosition: { x, y, width, height } });
+		Preferences.data = { windowPosition: { x, y, width, height } };
 	});
 
 	// HMR for renderer base on electron-vite cli.
@@ -69,6 +69,10 @@ const createWindow = async () => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
+	// Initialization
+	Preferences.data = await Preferences.load();
+	Updater.verify();
+
 	// Set app user model id for windows
 	electronApp.setAppUserModelId('com.electron');
 

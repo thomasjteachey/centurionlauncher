@@ -5,51 +5,52 @@ import { type z } from 'zod';
 import { app } from 'electron';
 
 import { PreferencesSchema } from '~common/schemas';
+import { omit } from '~common/utils';
 
-import Logger from './logger';
+const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
 
 abstract class Preferences {
-	static default = PreferencesSchema.parse({});
-	private static _data: z.infer<typeof PreferencesSchema>;
+	static #data: z.infer<typeof PreferencesSchema>;
 
-	static userDataDir = app.getPath('userData');
+	static readonly userDataDir = process.env.PORTABLE_EXECUTABLE_DIR
+		? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '.launcher')
+		: app.getPath('userData');
 
-	private static async load() {
+	static async load() {
 		const userDataPath = path.join(this.userDataDir, 'settings.json');
-
 		try {
-			if (!(await fs.exists(userDataPath))) return this.default;
 			const json = await fs.readJSON(userDataPath);
-			return PreferencesSchema.parse(json);
+			return PreferencesSchema.parse({
+				...json,
+				isPortable: !!portableDir,
+				clientDir: portableDir ?? json.clientDir
+			});
 		} catch (e) {
-			Logger.log('Failed to load settings.json', 'error', e);
-			return this.default;
+			return PreferencesSchema.parse({
+				isPortable: !!portableDir,
+				clientDir: portableDir
+			});
 		}
 	}
 
-	public static async read() {
-		if (!this._data) this._data = await this.load();
-		return this._data;
+	static get data(): PreferencesSchema {
+		return this.#data;
 	}
 
-	public static async write(
-		newData: Partial<z.infer<typeof PreferencesSchema>>
-	) {
-		if (newData.clientDir) {
-			const exists = await fs.exists(path.join(newData.clientDir, 'WoW.exe'));
-			if (!exists)
-				throw new Error('Invalid client directory. WoW.exe not found.');
-		}
-
-		if (!this._data) this._data = await this.load();
-
-		this._data = { ...this._data, ...newData };
-
-		await fs.writeJSON(
+	static set data(newData: Partial<Omit<PreferencesSchema, 'portableDir'>>) {
+		this.#data = { ...this.#data, ...newData };
+		fs.writeJSON(
 			path.join(this.userDataDir, 'settings.json'),
-			this._data,
+			omit(
+				this.#data,
+				portableDir ? ['isPortable', 'clientDir'] : ['isPortable']
+			),
 			{ spaces: 2 }
 		);
+	}
+
+	static async isValidClientDir(clientDir?: string) {
+		return !!clientDir && (await fs.exists(path.join(clientDir, 'WoW.exe')));
 	}
 }
 

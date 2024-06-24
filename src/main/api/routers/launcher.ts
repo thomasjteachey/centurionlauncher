@@ -13,7 +13,7 @@ import { createTRPCRouter, publicProcedure } from '../trpc';
 
 export const launcherRouter = createTRPCRouter({
 	start: publicProcedure.mutation(async () => {
-		const { cleanWdb, reopenLauncher, clientDir } = await Preferences.read();
+		const { cleanWdb, reopenLauncher, clientDir } = Preferences.data;
 		if (!clientDir) return false;
 
 		const clientPath = path.join(clientDir, 'WoW.exe');

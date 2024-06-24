@@ -1,4 +1,4 @@
-import { dialog, shell } from 'electron';
+import { app, dialog, shell } from 'electron';
 import { z } from 'zod';
 
 import { mainWindow } from '~main/index';
@@ -6,6 +6,7 @@ import { mainWindow } from '~main/index';
 import { createTRPCRouter, publicProcedure } from '../trpc';
 
 export const generalRouter = createTRPCRouter({
+	version: publicProcedure.query(() => app.getVersion()),
 	quit: publicProcedure.mutation(() => mainWindow?.close()),
 	minimize: publicProcedure.mutation(() => mainWindow?.minimize()),
 	openLink: publicProcedure

@@ -1,21 +1,15 @@
 import { z } from 'zod';
 
-import Preferences from '~main/modules/preferences';
 import Updater from '~main/modules/updater';
 
 import { createTRPCRouter, publicProcedure } from '../trpc';
 
 export const updaterRouter = createTRPCRouter({
-	verify: publicProcedure.mutation(async () => {
-		const { clientDir } = await Preferences.read();
-		Updater.verify(clientDir);
-	}),
+	invalidate: publicProcedure.mutation(() => Updater.invalidate()),
+	verify: publicProcedure.mutation(() => Updater.verify()),
 	update: publicProcedure
-		.input(z.object({ force: z.boolean() }).optional())
-		.mutation(async ({ input }) => {
-			const { clientDir } = await Preferences.read();
-			if (!clientDir) return;
-			Updater.update(clientDir, input?.force);
-		}),
+		.input(z.boolean().optional())
+		.mutation(({ input }) => Updater.update(input)),
+	updatePortable: publicProcedure.mutation(() => Updater.updateLauncher()),
 	observe: publicProcedure.subscription(() => Updater.observe())
 });

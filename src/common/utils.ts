@@ -33,3 +33,14 @@ export const focusBlur = <T extends { currentTarget: { blur: () => void } }>(
 				e?.currentTarget?.blur();
 		  }
 		: undefined;
+
+export const omit = <T extends object, const K extends keyof T>(
+	obj: T,
+	keys: K[]
+): Omit<T, K> => {
+	const result = { ...obj };
+	keys.forEach(key => {
+		delete result[key];
+	});
+	return result;
+};

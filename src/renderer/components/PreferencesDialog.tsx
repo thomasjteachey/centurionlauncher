@@ -31,7 +31,10 @@ const PreferencesDialog = ({ close }: Props) => {
 					>
 						{pref?.clientDir ? pref?.clientDir : 'Not selected'}
 					</span>
-					<DialogButton dialog={close => <ClientDirDialog close={close} />}>
+					<DialogButton
+						dialog={close => <ClientDirDialog close={close} />}
+						clickAway={pref?.isPortable}
+					>
 						{open => (
 							<TextButton icon={FolderPen} onClick={open}>
 								Change
@@ -62,7 +65,7 @@ const PreferencesDialog = ({ close }: Props) => {
 					icon={Download}
 					onClick={() => {
 						close();
-						update.mutateAsync({ force: true });
+						update.mutateAsync(true);
 					}}
 				>
 					Force update
