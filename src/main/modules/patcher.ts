@@ -15,6 +15,7 @@ export const patchConfig = async () => {
 	const exePath = path.join(clientDir, 'WoW.exe');
 	const buffer = await fs.readFile(exePath);
 	buffer.write(plusEnabled ? '12341' : '12340', 0x5f3a00, 6);
+	buffer.writeUInt16LE(plusEnabled ? 12341 : 12340, 0x4c99f0);
 	await fs.writeFile(exePath, buffer);
 
 	await fs.remove(path.join(clientDir, 'Data', 'enUs', 'realmlist.wtf'));
