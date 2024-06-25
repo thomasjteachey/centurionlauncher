@@ -16,6 +16,27 @@ export const patchConfig = async () => {
 	const buffer = await fs.readFile(exePath);
 	buffer.write(plusEnabled ? '12341' : '12340', 0x5f3a00, 6);
 	buffer.writeUInt16LE(plusEnabled ? 12341 : 12340, 0x4c99f0);
+
+	// SIG & MD5 Protection Remover
+	(
+		[
+			[0x1f41bf, 0xeb],
+			[0x415a25, 0xeb],
+			[0x415a3f, 0x03],
+			[0x415a95, 0x03],
+			[0x415b46, 0xeb],
+			[0x415b5f, [0xb8, 0x03, 0x00, 0x00, 0x00, 0xeb, 0xed]],
+			[0x4c99f0, 0x35],
+			[0x5f3a04, 0x31]
+		] as [number, number | number[]][]
+	).forEach(([offset, value]) => {
+		if (Array.isArray(value)) {
+			value.forEach((v, i) => buffer.writeUInt8(v, offset + i));
+		} else {
+			buffer.writeUInt8(value, offset);
+		}
+	});
+
 	await fs.writeFile(exePath, buffer);
 
 	await fs.remove(path.join(clientDir, 'Data', 'enUs', 'realmlist.wtf'));

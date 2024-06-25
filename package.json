@@ -1,6 +1,6 @@
 {
 	"name": "centurion-launcher",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"description": "An Electron application for launching and updating CenturionWoW client",
 	"author": "Maroš Beťko (Haaxor1689)",
 	"main": "./out/main/index.js",
