@@ -381,7 +381,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 }
 
                                 const hasAllFiles = async () => {
-                                        if (expectedFiles.length === 0) return false;
+                                        if (expectedFiles.length === 0) {
+                                                return !shouldCache;
+                                        }
                                         for (const file of expectedFiles) {
                                                 const destination = path.join(
                                                         clientDir,
@@ -464,9 +466,11 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 };
 
                                 let needsDownload = false;
-                                let downloadReason: 'missing' | 'update' = 'update';
+                                let downloadReason: 'missing' | 'update' | 'metadata' = 'update';
 
-                                if (this.#versionCache[name] === version) {
+                                const cachedVersion = this.#versionCache[name];
+
+                                if (cachedVersion === version) {
                                         if (await hasAllFiles()) {
                                                 continue;
                                         }
@@ -481,6 +485,12 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         delete this.#versionCache[name];
                                         needsDownload = true;
                                         downloadReason = 'missing';
+                                } else if (!cachedVersion) {
+                                        Logger.log(
+                                                `No version metadata found for ${name}. Scheduling download to rebuild the cache.`
+                                        );
+                                        needsDownload = true;
+                                        downloadReason = 'metadata';
                                 } else {
                                         if (await restoreFromCache()) {
                                                 continue;
@@ -498,8 +508,12 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                                 if (downloadReason === 'update') {
                                         Logger.log(`New ${name} version available: ${version}`);
-                                } else {
+                                } else if (downloadReason === 'missing') {
                                         Logger.log(`Re-downloading ${name} files to replace missing data.`);
+                                } else {
+                                        Logger.log(
+                                                `Re-downloading ${name} to restore missing version metadata in the cache.`
+                                        );
                                 }
 
                                 toDownload += await fetchSize(`${name}.zip`);
@@ -566,44 +580,43 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				message: 'Preparing files...'
 			};
 
-			const extractArchive = async (
-				name: string,
-				file: string,
-				filePath: string,
-				shouldCache: boolean
-			) => {
-				let finished = false;
-				const archive = await yauzl.open(file);
-				try {
-					for await (const entry of archive) {
-						Logger.log(`Extracting "${entry.filename}"...`);
-						if (entry.filename.endsWith('/')) {
-							await fs.ensureDir(path.join(filePath, entry.filename));
-						} else {
-							const dest = path.join(filePath, entry.filename);
-							await fs.ensureDir(path.dirname(dest));
-							const readStream = await entry.openReadStream();
-							const writeStream = fs.createWriteStream(dest);
-							await new Promise((resolve, reject) => {
-								readStream.pipe(writeStream);
-								writeStream.on('finish', resolve);
-								writeStream.on('error', reject);
-							});
+                        const extractArchive = async (
+                                name: string,
+                                file: string,
+                                filePath: string
+                        ) => {
+                                let finished = false;
+                                const archive = await yauzl.open(file);
+                                const extractedFiles: string[] = [];
+                                try {
+                                        for await (const entry of archive) {
+                                                Logger.log(`Extracting "${entry.filename}"...`);
+                                                if (entry.filename.endsWith('/')) {
+                                                        await fs.ensureDir(path.join(filePath, entry.filename));
+                                                } else {
+                                                        const dest = path.join(filePath, entry.filename);
+                                                        await fs.ensureDir(path.dirname(dest));
+                                                        const readStream = await entry.openReadStream();
+                                                        const writeStream = fs.createWriteStream(dest);
+                                                        await new Promise((resolve, reject) => {
+                                                                readStream.pipe(writeStream);
+                                                                writeStream.on('finish', resolve);
+                                                                writeStream.on('error', reject);
+                                                        });
 
-							if (!shouldCache) continue;
-							if (!this.#fileCache[name]) this.#fileCache[name] = [];
-							this.#fileCache[name].push(entry.filename);
-						}
-					}
-					finished = true;
-				} finally {
-					await archive.close();
-					if (finished) {
-						Logger.log(`Removing "${file}"...`);
-						await fs.remove(file);
-					}
-				}
-			};
+                                                        extractedFiles.push(entry.filename);
+                                                }
+                                        }
+                                        finished = true;
+                                } finally {
+                                        await archive.close();
+                                        if (finished) {
+                                                Logger.log(`Removing "${file}"...`);
+                                                await fs.remove(file);
+                                                this.#fileCache[name] = extractedFiles;
+                                        }
+                                }
+                        };
 
                         for (const [name, meta] of Object.entries(FileMap)) {
                                 const isOptionalEnabled =
@@ -642,12 +655,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 					progress: -1,
 					message: `Extracting ${name}...`
 				};
-                                await extractArchive(
-                                        name,
-                                        file,
-                                        path.join(clientDir, meta.extractPath),
-                                        shouldCache
-                                );
+                                await extractArchive(name, file, path.join(clientDir, meta.extractPath));
 
 				this.#versionCache[name] = await fetchVersion(`${name}.version`);
 				await this.#saveCache(clientDir);
