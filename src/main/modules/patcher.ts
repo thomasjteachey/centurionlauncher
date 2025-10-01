@@ -6,17 +6,20 @@ import fs from 'fs-extra';
 import Preferences from '~main/modules/preferences';
 import { isNotUndef } from '~common/utils';
 import Logger from '~main/modules/logger';
-import { DEFAULT_REALMLIST } from '~common/constants';
+import { DEFAULT_REALMLIST, REALMS } from '~common/constants';
 
 export const patchConfig = async () => {
-        const { clientDir, plusEnabled, realmList } = Preferences.data;
+        const { clientDir, selectedRealm, realmList } = Preferences.data;
         if (!clientDir) return;
 
-	// Patch WoW.exe
-	const exePath = path.join(clientDir, 'WoW.exe');
-	const buffer = await fs.readFile(exePath);
-	buffer.write(plusEnabled ? '12341' : '12340', 0x5f3a00, 6);
-	buffer.writeUInt16LE(plusEnabled ? 12341 : 12340, 0x4c99f0);
+        const realmKey = selectedRealm ?? 'legionnaire';
+        const realmConfig = REALMS[realmKey];
+
+        // Patch WoW.exe
+        const exePath = path.join(clientDir, 'WoW.exe');
+        const buffer = await fs.readFile(exePath);
+        buffer.write(realmConfig.build.string, 0x5f3a00, 6);
+        buffer.writeUInt16LE(realmConfig.build.number, 0x4c99f0);
 
 	// SIG & MD5 Protection Remover
 	(
@@ -64,17 +67,11 @@ export const patchConfig = async () => {
 
         const realmHost = realmList ?? DEFAULT_REALMLIST;
 
-        const realmInfo = plusEnabled
-                ? {
-                                realmList: realmHost,
-                                patchList: realmHost,
-                                realmName: 'Legionnaire Plus'
-                  }
-                : {
-                                realmList: realmHost,
-                                patchList: realmHost,
-                                realmName: 'Legionnaire'
-                  };
+        const realmInfo = {
+                realmList: realmHost,
+                patchList: realmHost,
+                realmName: realmConfig.realmName
+        };
 
 	const parsed = {
 		// Defaults
