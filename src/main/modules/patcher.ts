@@ -6,10 +6,11 @@ import fs from 'fs-extra';
 import Preferences from '~main/modules/preferences';
 import { isNotUndef } from '~common/utils';
 import Logger from '~main/modules/logger';
+import { DEFAULT_REALMLIST } from '~common/constants';
 
 export const patchConfig = async () => {
-	const { clientDir, plusEnabled } = Preferences.data;
-	if (!clientDir) return;
+        const { clientDir, plusEnabled, realmList } = Preferences.data;
+        if (!clientDir) return;
 
 	// Patch WoW.exe
 	const exePath = path.join(clientDir, 'WoW.exe');
@@ -61,17 +62,19 @@ export const patchConfig = async () => {
 	const primaryDisplay = screen.getPrimaryDisplay();
 	const { width, height } = primaryDisplay.bounds;
 
-	const realmInfo = plusEnabled
-		? {
-				realmList: 'centurionpvp.com',
-				patchList: 'centurionpvp.com',
-				realmName: 'Legionnaire Plus'
-		  }
-		: {
-				realmList: 'centurionpvp.com',
-				patchList: 'centurionpvp.com',
-				realmName: 'Legionnaire'
-		  };
+        const realmHost = realmList ?? DEFAULT_REALMLIST;
+
+        const realmInfo = plusEnabled
+                ? {
+                                realmList: realmHost,
+                                patchList: realmHost,
+                                realmName: 'Legionnaire Plus'
+                  }
+                : {
+                                realmList: realmHost,
+                                patchList: realmHost,
+                                realmName: 'Legionnaire'
+                  };
 
 	const parsed = {
 		// Defaults
