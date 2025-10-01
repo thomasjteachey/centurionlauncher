@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { DEFAULT_LAUNCHER_UPDATE_URL } from './constants';
+import { DEFAULT_LAUNCHER_UPDATE_URL, DEFAULT_REALMLIST } from './constants';
 
 /**
  * Zod type wrappers for use with form inputs
@@ -40,6 +40,7 @@ export const PreferencesSchema = z.object({
                 .min(1)
                 .transform(normalizeLauncherUrl)
                 .default(DEFAULT_LAUNCHER_UPDATE_URL),
+        realmList: z.string().trim().min(1).default(DEFAULT_REALMLIST),
         windowPosition: z
                 .object({
                         x: z.number(),

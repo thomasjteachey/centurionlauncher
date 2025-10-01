@@ -1,4 +1,5 @@
 export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://centurionpvp.com/downloads/';
+export const DEFAULT_REALMLIST = 'centurionpvp.com';
 
 export const FileMap: Record<
         string,
