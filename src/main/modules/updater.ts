@@ -150,7 +150,37 @@ export type UpdaterStatus = {
 
 class UpdaterClass extends Observable<UpdaterStatus> {
 	#versionCache: Record<string, string> = {};
-	#fileCache: Record<string, string[]> = {};
+        #fileCache: Record<string, string[]> = {};
+
+        #cachePatchFiles = async (
+                clientDir: string,
+                name: string,
+                version: string,
+                extractPath: string,
+                files: string[]
+        ) => {
+                if (files.length === 0) return;
+
+                const cacheRoot = path.join(clientDir, '.launcher', 'cached', name);
+                const cachePath = path.join(cacheRoot, version);
+
+                try {
+                        await fs.ensureDir(path.join(clientDir, '.launcher', 'cached'));
+                        await fs.remove(cacheRoot);
+                        await fs.ensureDir(cachePath);
+
+                        for (const file of files) {
+                                const source = path.join(clientDir, extractPath, file);
+                                if (!(await fs.pathExists(source))) continue;
+
+                                const destination = path.join(cachePath, file);
+                                await fs.ensureDir(path.dirname(destination));
+                                await fs.copy(source, destination, { overwrite: true });
+                        }
+                } catch (e) {
+                        Logger.log(`Failed to populate cache for ${name}@${version}`, 'error', e);
+                }
+        };
 
 	#loadCache = async (clientDir: string) => {
 		await fs.ensureDir(path.join(clientDir, '.launcher'));
@@ -358,12 +388,14 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 if (!shouldUse) {
                                         if (shouldCache && this.#versionCache[name]) {
                                                 // Move files to cache
+                                                await fs.remove(cachePath!);
                                                 await fs.ensureDir(cachePath!);
                                                 for (const file of this.#fileCache[name] ?? []) {
                                                         try {
                                                                 await fs.move(
                                                                         path.join(clientDir, meta.extractPath, file),
-                                                                        path.join(cachePath!, file)
+                                                                        path.join(cachePath!, file),
+                                                                        { overwrite: true }
                                                                 );
                                                         } catch (e) {
                                                                 console.error(e);
@@ -616,6 +648,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                 this.#fileCache[name] = extractedFiles;
                                         }
                                 }
+                                return extractedFiles;
                         };
 
                         for (const [name, meta] of Object.entries(FileMap)) {
@@ -655,10 +688,26 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 					progress: -1,
 					message: `Extracting ${name}...`
 				};
-                                await extractArchive(name, file, path.join(clientDir, meta.extractPath));
+                                const extractedFiles = await extractArchive(
+                                        name,
+                                        file,
+                                        path.join(clientDir, meta.extractPath)
+                                );
 
-				this.#versionCache[name] = await fetchVersion(`${name}.version`);
-				await this.#saveCache(clientDir);
+                                const version = await fetchVersion(`${name}.version`);
+                                this.#versionCache[name] = version;
+
+                                if (shouldCache) {
+                                        await this.#cachePatchFiles(
+                                                clientDir,
+                                                name,
+                                                version,
+                                                meta.extractPath,
+                                                extractedFiles
+                                        );
+                                }
+
+                                await this.#saveCache(clientDir);
 			}
 
 			this.status = { state: 'upToDate', progress: 1 };
