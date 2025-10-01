@@ -397,8 +397,8 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                                         path.join(cachePath!, file),
                                                                         { overwrite: true }
                                                                 );
-                                                        } catch (e) {
-                                                                console.error(e);
+                                                        } catch (_error) {
+                                                                console.error(_error);
                                                         }
                                                 }
                                                 delete this.#versionCache[name];
@@ -414,7 +414,33 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                                 const hasAllFiles = async () => {
                                         if (expectedFiles.length === 0) {
-                                                return !shouldCache;
+                                                if (!shouldCache) {
+                                                        try {
+                                                                const entries = await fs.readdir(
+                                                                        path.join(clientDir, meta.extractPath)
+                                                                );
+                                                                const inferredFiles = entries.filter(entry =>
+                                                                        entry
+                                                                                .toLowerCase()
+                                                                                .startsWith(name.toLowerCase())
+                                                                );
+
+                                                                if (inferredFiles.length !== 0) {
+                                                                        expectedFiles.splice(
+                                                                                0,
+                                                                                expectedFiles.length,
+                                                                                ...inferredFiles
+                                                                        );
+                                                                }
+                                                        } catch (_error) {
+                                                                // If the directory doesn't exist yet we fall back to the
+                                                                // standard download path below.
+                                                        }
+                                                }
+
+                                                if (expectedFiles.length === 0) {
+                                                        return false;
+                                                }
                                         }
                                         for (const file of expectedFiles) {
                                                 const destination = path.join(
