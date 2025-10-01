@@ -1,6 +1,8 @@
 import { Download, FolderPen } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { api } from '~renderer/utils/api';
+import { DEFAULT_LAUNCHER_UPDATE_URL } from '~common/constants';
 
 import TextButton from './styled/TextButton';
 import CheckboxInput from './form/CheckboxInput';
@@ -11,10 +13,37 @@ import CloseButton from './styled/CloseButton';
 type Props = { close: () => void };
 
 const PreferencesDialog = ({ close }: Props) => {
-	const { data: pref } = api.preferences.get.useQuery();
-	const setPref = api.preferences.set.useMutation();
+        const { data: pref } = api.preferences.get.useQuery();
+        const setPref = api.preferences.set.useMutation();
 
-	const update = api.updater.update.useMutation();
+        const update = api.updater.update.useMutation();
+
+        const [launcherUpdateUrl, setLauncherUpdateUrl] = useState('');
+
+        useEffect(() => {
+                setLauncherUpdateUrl(pref?.launcherUpdateUrl ?? DEFAULT_LAUNCHER_UPDATE_URL);
+        }, [pref?.launcherUpdateUrl]);
+
+        const persistLauncherUpdateUrl = async () => {
+                const trimmed = launcherUpdateUrl.trim();
+                if (!pref) return;
+                if (!trimmed) {
+                        setLauncherUpdateUrl(pref.launcherUpdateUrl);
+                        return;
+                }
+
+                if (trimmed === pref.launcherUpdateUrl) return;
+
+                try {
+                        const updated = await setPref.mutateAsync({
+                                launcherUpdateUrl: trimmed
+                        });
+                        setLauncherUpdateUrl(updated.launcherUpdateUrl);
+                } catch (error) {
+                        setLauncherUpdateUrl(pref.launcherUpdateUrl);
+                        console.error(error);
+                }
+        };
 
 	return (
 		<div className="dialog">
@@ -56,16 +85,43 @@ const PreferencesDialog = ({ close }: Props) => {
 					setValue={v => setPref.mutateAsync({ reopenLauncher: v })}
 					label="Reopen launcher after WoW closes"
 				/>
-				<CheckboxInput
-					value={pref?.rememberPosition ?? false}
-					setValue={v => setPref.mutateAsync({ rememberPosition: v })}
-					label="Remember position & size of launcher window"
-				/>
-				<TextButton
-					icon={Download}
-					onClick={() => {
-						close();
-						update.mutateAsync(true);
+                                <CheckboxInput
+                                        value={pref?.rememberPosition ?? false}
+                                        setValue={v => setPref.mutateAsync({ rememberPosition: v })}
+                                        label="Remember position & size of launcher window"
+                                />
+                                <div className="mt-3 flex flex-col gap-1 pl-2">
+                                        <label
+                                                htmlFor="launcher-update-url"
+                                                className="text-sm text-text"
+                                        >
+                                                Launcher update server
+                                        </label>
+                                        <input
+                                                id="launcher-update-url"
+                                                className="rounded border border-text bg-transparent p-2 text-sm text-text focus:border-primary focus:outline-none"
+                                                value={launcherUpdateUrl}
+                                                onChange={event =>
+                                                        setLauncherUpdateUrl(event.target.value)
+                                                }
+                                                onBlur={persistLauncherUpdateUrl}
+                                                onKeyDown={event => {
+                                                        if (event.key === 'Enter') {
+                                                                event.preventDefault();
+                                                                event.currentTarget.blur();
+                                                        }
+                                                }}
+                                                placeholder={DEFAULT_LAUNCHER_UPDATE_URL}
+                                        />
+                                        <span className="text-xs text-textDark">
+                                                Changing this will automatically recheck for launcher updates.
+                                        </span>
+                                </div>
+                                <TextButton
+                                        icon={Download}
+                                        onClick={() => {
+                                                close();
+                                                update.mutateAsync(true);
 					}}
 				>
 					Force update

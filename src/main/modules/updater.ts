@@ -11,7 +11,7 @@ import logger from 'electron-log';
 
 import { mainWindow } from '~main/index';
 import { formatDuration, formatFileSize } from '~common/utils';
-import { FileMap } from '~common/constants';
+import { DEFAULT_LAUNCHER_UPDATE_URL, FileMap } from '~common/constants';
 
 import Logger from './logger';
 import Preferences from './preferences';
@@ -23,7 +23,21 @@ autoUpdater.logger = logger;
 autoUpdater.autoDownload = false;
 autoUpdater.disableWebInstaller = true;
 
-const ServerUrl = 'http://centurionpvp.com/downloads/';
+const resolveBaseUrl = () => {
+        const { launcherUpdateUrl } = Preferences.data;
+        return launcherUpdateUrl ?? DEFAULT_LAUNCHER_UPDATE_URL;
+};
+
+const resolvePatchUrl = (filePath: string) =>
+        new URL(`patches/${filePath.replace(/^\/+/, '')}`, resolveBaseUrl()).toString();
+
+const configureAutoUpdaterFeed = () => {
+        try {
+                autoUpdater.setFeedURL({ url: new URL('patches/', resolveBaseUrl()).toString() });
+        } catch (e) {
+                Logger.log('Failed to configure launcher update feed URL', 'error', e);
+        }
+};
 
 // const isReadOnly = async (filePath: string) => {
 // 	try {
@@ -80,11 +94,11 @@ const fetchFile = async (
 			'downloads',
 			filePath
 		);
-		await resumableFetch(
-			`${ServerUrl}patches/${filePath}`,
-			downloadPath,
-			progressCb,
-			{
+                await resumableFetch(
+                        resolvePatchUrl(filePath),
+                        downloadPath,
+                        progressCb,
+                        {
 				throttle: 500
 			}
 		);
@@ -97,9 +111,9 @@ const fetchFile = async (
 
 const fetchSize = async (filePath: string) => {
 	try {
-		const response = await fetch(`${ServerUrl}patches/${filePath}`, {
-			method: 'HEAD'
-		});
+                const response = await fetch(resolvePatchUrl(filePath), {
+                        method: 'HEAD'
+                });
 		return parseInt(response.headers.get('content-length') ?? '0');
 	} catch (e) {
 		Logger.log(`Failed to download ${filePath}`, 'error', e);
@@ -109,7 +123,7 @@ const fetchSize = async (filePath: string) => {
 
 const fetchVersion = async (filePath: string) => {
 	try {
-		const response = await fetch(`${ServerUrl}patches/${filePath}`);
+                const response = await fetch(resolvePatchUrl(filePath));
 		return response.text();
 	} catch (e) {
 		Logger.log(`Failed to download ${filePath}`, 'error', e);
@@ -237,10 +251,11 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			});
 			child.unref();
 			app.quit();
-		} else {
-			autoUpdater.on(
-				'download-progress',
-				({ percent, bytesPerSecond, total, transferred }) => {
+                } else {
+                        configureAutoUpdaterFeed();
+                        autoUpdater.on(
+                                'download-progress',
+                                ({ percent, bytesPerSecond, total, transferred }) => {
 					const eta = formatDuration((total - transferred) / bytesPerSecond);
 					this.status = {
 						state: 'updating',
@@ -280,10 +295,11 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 					return;
 				}
 			} else {
-				try {
-					const update = await autoUpdater.checkForUpdates();
-					if (update) {
-						this.status = { state: 'launcherOutdated' };
+                                try {
+                                        configureAutoUpdaterFeed();
+                                        const update = await autoUpdater.checkForUpdates();
+                                        if (update) {
+                                                this.status = { state: 'launcherOutdated' };
 						return;
 					}
 				} catch (e) {

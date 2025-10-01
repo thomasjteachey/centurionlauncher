@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { PreferencesSchema } from '~common/schemas';
 import Preferences from '~main/modules/preferences';
+import Updater from '~main/modules/updater';
 
 import { createTRPCRouter, publicProcedure } from '../trpc';
 
@@ -16,9 +17,18 @@ export const preferencesRouter = createTRPCRouter({
 			) {
 				throw new Error('Invalid client directory. WoW.exe not found.');
 			}
-			Preferences.data = input;
-			return Preferences.data;
-		}),
+                        const previousUrl = Preferences.data.launcherUpdateUrl;
+                        Preferences.data = input;
+
+                        if (
+                                input.launcherUpdateUrl !== undefined &&
+                                Preferences.data.launcherUpdateUrl !== previousUrl
+                        ) {
+                                void Updater.verify();
+                        }
+
+                        return Preferences.data;
+                }),
 	isValidClientDir: publicProcedure
 		.input(z.string().optional())
 		.query(({ input }) => Preferences.isValidClientDir(input))

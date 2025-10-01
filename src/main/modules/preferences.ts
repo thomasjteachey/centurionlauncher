@@ -4,13 +4,16 @@ import fs from 'fs-extra';
 import { type z } from 'zod';
 import { app } from 'electron';
 
+import { DEFAULT_LAUNCHER_UPDATE_URL } from '~common/constants';
 import { PreferencesSchema } from '~common/schemas';
 import { omit } from '~common/utils';
 
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
 
 abstract class Preferences {
-	static #data: z.infer<typeof PreferencesSchema>;
+        static #data: z.infer<typeof PreferencesSchema> = PreferencesSchema.parse({
+                launcherUpdateUrl: DEFAULT_LAUNCHER_UPDATE_URL
+        });
 
 	static readonly userDataDir = process.env.PORTABLE_EXECUTABLE_DIR
 		? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '.launcher')
@@ -38,11 +41,11 @@ abstract class Preferences {
 	}
 
 	static set data(newData: Partial<Omit<PreferencesSchema, 'portableDir'>>) {
-		this.#data = { ...this.#data, ...newData };
-		fs.writeJSON(
-			path.join(this.userDataDir, 'settings.json'),
-			omit(
-				this.#data,
+                this.#data = PreferencesSchema.parse({ ...this.#data, ...newData });
+                void fs.writeJSON(
+                        path.join(this.userDataDir, 'settings.json'),
+                        omit(
+                                this.#data,
 				portableDir ? ['isPortable', 'clientDir'] : ['isPortable']
 			),
 			{ spaces: 2 }
