@@ -551,7 +551,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         if (await restoreFromCache()) {
                                                 continue;
                                         }
-
                                         delete this.#versionCache[name];
                                         needsDownload = true;
                                         downloadReason = 'update';
@@ -673,7 +672,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                 this.#fileCache[name] = extractedFiles;
                                         }
                                 }
-
                                 return extractedFiles;
                         };
 
