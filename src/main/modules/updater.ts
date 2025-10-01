@@ -320,7 +320,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
 			if (isPortable) {
 				await fs.remove(path.join(clientDir, 'update-script.bat'));
-				const version = await fetchVersion('latest.yml');
+                                const version = await fetchVersion('latest.yaml');
 				if (version.match(/version: (.*)/)?.[1] !== app.getVersion()) {
 					this.status = { state: 'launcherOutdated' };
 					return;
