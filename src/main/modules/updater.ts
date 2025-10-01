@@ -374,34 +374,149 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         continue;
                                 }
 
-                                // Check version
-                                if (this.#versionCache[name] === version) continue;
+                                let expectedFiles = this.#fileCache[name];
+                                if (!expectedFiles) {
+                                        expectedFiles = [];
+                                        this.#fileCache[name] = expectedFiles;
+                                }
 
-                                if (shouldCache && cachePath && (await fs.exists(cachePath))) {
-                                        // Move files from cache
-                                        for (const file of this.#fileCache[name] ?? []) {
+                                const hasAllFiles = async () => {
+                                        if (expectedFiles.length === 0) {
+                                                return !shouldCache;
+                                        }
+                                        for (const file of expectedFiles) {
+                                                const destination = path.join(
+                                                        clientDir,
+                                                        meta.extractPath,
+                                                        file
+                                                );
+                                                if (!(await fs.pathExists(destination))) {
+                                                        return false;
+                                                }
+                                        }
+                                        return true;
+                                };
+
+                                const restoreFromCache = async () => {
+                                        if (!shouldCache || !cachePath || !(await fs.exists(cachePath))) {
+                                                return false;
+                                        }
+
+                                        const collectCacheFiles = async (dir: string) => {
+                                                const entries = await fs.readdir(dir);
+                                                const files: string[] = [];
+                                                for (const entry of entries) {
+                                                        const entryPath = path.join(dir, entry);
+                                                        const stats = await fs.stat(entryPath);
+                                                        if (stats.isDirectory()) {
+                                                                files.push(
+                                                                        ...(await collectCacheFiles(entryPath))
+                                                                );
+                                                        } else {
+                                                                files.push(
+                                                                        path
+                                                                                .relative(cachePath, entryPath)
+                                                                                .replace(/\\/g, '/')
+                                                                );
+                                                        }
+                                                }
+                                                return files;
+                                        };
+
+                                        const filesToRestore =
+                                                expectedFiles.length !== 0
+                                                        ? expectedFiles
+                                                        : await collectCacheFiles(cachePath);
+
+                                        if (filesToRestore.length === 0) return false;
+
+                                        let movedAny = false;
+                                        for (const file of filesToRestore) {
+                                                const source = path.join(cachePath, file);
+                                                if (!(await fs.pathExists(source))) continue;
+                                                const destination = path.join(
+                                                        clientDir,
+                                                        meta.extractPath,
+                                                        file
+                                                );
                                                 try {
-                                                        await fs.move(
-                                                                path.join(cachePath, file),
-                                                                path.join(clientDir, meta.extractPath, file)
-                                                        );
+                                                        await fs.ensureDir(path.dirname(destination));
+                                                        await fs.move(source, destination, { overwrite: true });
+                                                        movedAny = true;
                                                 } catch (e) {
                                                         console.error(e);
                                                 }
                                         }
+
+                                        if (!movedAny) return false;
+
+                                        const uniqueFiles = Array.from(
+                                                new Set([...expectedFiles, ...filesToRestore])
+                                        );
+                                        expectedFiles.splice(0, expectedFiles.length, ...uniqueFiles);
+                                        this.#fileCache[name] = expectedFiles;
+
+                                        if (!(await hasAllFiles())) {
+                                                return false;
+                                        }
+
                                         this.#versionCache[name] = version;
                                         await fs.remove(cachePath);
-                                        continue;
+                                        return true;
+                                };
+
+                                let needsDownload = false;
+                                let downloadReason: 'missing' | 'update' | 'metadata' = 'update';
+
+                                const cachedVersion = this.#versionCache[name];
+
+                                if (cachedVersion === version) {
+                                        if (await hasAllFiles()) {
+                                                continue;
+                                        }
+
+                                        if (await restoreFromCache()) {
+                                                continue;
+                                        }
+
+                                        Logger.log(
+                                                `Missing files detected for ${name}. Scheduling download to restore them.`
+                                        );
+                                        delete this.#versionCache[name];
+                                        needsDownload = true;
+                                        downloadReason = 'missing';
+                                } else if (!cachedVersion) {
+                                        Logger.log(
+                                                `No version metadata found for ${name}. Scheduling download to rebuild the cache.`
+                                        );
+                                        needsDownload = true;
+                                        downloadReason = 'metadata';
+                                } else {
+                                        if (await restoreFromCache()) {
+                                                continue;
+                                        }
+
+                                        delete this.#versionCache[name];
+                                        needsDownload = true;
+                                        downloadReason = 'update';
                                 }
 
-                                // Remove old cached versions
+                                if (!needsDownload) continue;
+
                                 if (shouldCache && cachePath) {
                                         await fs.remove(path.dirname(cachePath));
                                 }
 
-                                // Add to download
-                                Logger.log(`New ${name} version available: ${version}`);
-                                delete this.#versionCache[name];
+                                if (downloadReason === 'update') {
+                                        Logger.log(`New ${name} version available: ${version}`);
+                                } else if (downloadReason === 'missing') {
+                                        Logger.log(`Re-downloading ${name} files to replace missing data.`);
+                                } else {
+                                        Logger.log(
+                                                `Re-downloading ${name} to restore missing version metadata in the cache.`
+                                        );
+                                }
+
                                 toDownload += await fetchSize(`${name}.zip`);
                         }
 
@@ -466,44 +581,43 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				message: 'Preparing files...'
 			};
 
-			const extractArchive = async (
-				name: string,
-				file: string,
-				filePath: string,
-				shouldCache: boolean
-			) => {
-				let finished = false;
-				const archive = await yauzl.open(file);
-				try {
-					for await (const entry of archive) {
-						Logger.log(`Extracting "${entry.filename}"...`);
-						if (entry.filename.endsWith('/')) {
-							await fs.ensureDir(path.join(filePath, entry.filename));
-						} else {
-							const dest = path.join(filePath, entry.filename);
-							await fs.ensureDir(path.dirname(dest));
-							const readStream = await entry.openReadStream();
-							const writeStream = fs.createWriteStream(dest);
-							await new Promise((resolve, reject) => {
-								readStream.pipe(writeStream);
-								writeStream.on('finish', resolve);
-								writeStream.on('error', reject);
-							});
+                        const extractArchive = async (
+                                name: string,
+                                file: string,
+                                filePath: string
+                        ) => {
+                                let finished = false;
+                                const archive = await yauzl.open(file);
+                                const extractedFiles: string[] = [];
+                                try {
+                                        for await (const entry of archive) {
+                                                Logger.log(`Extracting "${entry.filename}"...`);
+                                                if (entry.filename.endsWith('/')) {
+                                                        await fs.ensureDir(path.join(filePath, entry.filename));
+                                                } else {
+                                                        const dest = path.join(filePath, entry.filename);
+                                                        await fs.ensureDir(path.dirname(dest));
+                                                        const readStream = await entry.openReadStream();
+                                                        const writeStream = fs.createWriteStream(dest);
+                                                        await new Promise((resolve, reject) => {
+                                                                readStream.pipe(writeStream);
+                                                                writeStream.on('finish', resolve);
+                                                                writeStream.on('error', reject);
+                                                        });
 
-							if (!shouldCache) continue;
-							if (!this.#fileCache[name]) this.#fileCache[name] = [];
-							this.#fileCache[name].push(entry.filename);
-						}
-					}
-					finished = true;
-				} finally {
-					await archive.close();
-					if (finished) {
-						Logger.log(`Removing "${file}"...`);
-						await fs.remove(file);
-					}
-				}
-			};
+                                                        extractedFiles.push(entry.filename);
+                                                }
+                                        }
+                                        finished = true;
+                                } finally {
+                                        await archive.close();
+                                        if (finished) {
+                                                Logger.log(`Removing "${file}"...`);
+                                                await fs.remove(file);
+                                                this.#fileCache[name] = extractedFiles;
+                                        }
+                                }
+                        };
 
                         for (const [name, meta] of Object.entries(FileMap)) {
                                 const isOptionalEnabled =
@@ -542,12 +656,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 					progress: -1,
 					message: `Extracting ${name}...`
 				};
-                                await extractArchive(
-                                        name,
-                                        file,
-                                        path.join(clientDir, meta.extractPath),
-                                        shouldCache
-                                );
+                                await extractArchive(name, file, path.join(clientDir, meta.extractPath));
 
 				this.#versionCache[name] = await fetchVersion(`${name}.version`);
 				await this.#saveCache(clientDir);
