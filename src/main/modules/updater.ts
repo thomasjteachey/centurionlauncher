@@ -354,6 +354,56 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 const isRealmEnabled =
                                         !meta.realms || meta.realms.includes(realmKey);
                                 const shouldUse = isOptionalEnabled && isRealmEnabled;
+                                const versionMatches = this.#versionCache[name] === version;
+                                let needsDownload = false;
+
+                                if (shouldUse && versionMatches && shouldCache) {
+                                        const trackedFiles = this.#fileCache[name] ?? [];
+                                        if (trackedFiles.length > 0) {
+                                                const findMissingFiles = async () => {
+                                                        const missing: string[] = [];
+                                                        for (const file of trackedFiles) {
+                                                                const destination = path.join(
+                                                                        clientDir,
+                                                                        meta.extractPath,
+                                                                        file
+                                                                );
+                                                                if (!(await fs.pathExists(destination))) {
+                                                                        missing.push(file);
+                                                                }
+                                                        }
+                                                        return missing;
+                                                };
+
+                                                let missingFiles = await findMissingFiles();
+                                                if (
+                                                        missingFiles.length > 0 &&
+                                                        cachePath &&
+                                                        (await fs.exists(cachePath))
+                                                ) {
+                                                        for (const file of trackedFiles) {
+                                                                try {
+                                                                        await fs.move(
+                                                                                path.join(cachePath, file),
+                                                                                path.join(
+                                                                                        clientDir,
+                                                                                        meta.extractPath,
+                                                                                        file
+                                                                                ),
+                                                                                { overwrite: true }
+                                                                        );
+                                                                } catch (e) {
+                                                                        console.error(e);
+                                                                }
+                                                        }
+                                                        missingFiles = await findMissingFiles();
+                                                }
+
+                                                if (missingFiles.length > 0) {
+                                                        needsDownload = true;
+                                                }
+                                        }
+                                }
 
                                 if (!shouldUse) {
                                         if (shouldCache && this.#versionCache[name]) {
@@ -375,9 +425,19 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 }
 
                                 // Check version
-                                if (this.#versionCache[name] === version) continue;
+                                if (!needsDownload && this.#versionCache[name] === version) {
+                                        if (shouldCache && cachePath) {
+                                                await fs.remove(cachePath);
+                                        }
+                                        continue;
+                                }
 
-                                if (shouldCache && cachePath && (await fs.exists(cachePath))) {
+                                if (
+                                        !needsDownload &&
+                                        shouldCache &&
+                                        cachePath &&
+                                        (await fs.exists(cachePath))
+                                ) {
                                         // Move files from cache
                                         for (const file of this.#fileCache[name] ?? []) {
                                                 try {
