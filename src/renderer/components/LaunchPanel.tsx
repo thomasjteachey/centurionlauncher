@@ -16,8 +16,7 @@ const LaunchPanel = () => {
 
 	const verify = api.updater.verify.useMutation();
 	const update = api.updater.update.useMutation();
-	const updatePortable = api.updater.updatePortable.useMutation();
-	const start = api.launcher.start.useMutation();
+        const start = api.launcher.start.useMutation();
 
 	const props: Record<
 		UpdaterStatus['state'],
@@ -63,19 +62,6 @@ const LaunchPanel = () => {
 					<p>Client location was not yet selected</p>
 					<p className="text-xs text-textDark">
 						Please select your World of Warcraft 3.3.5 location
-					</p>
-				</div>
-			)
-		},
-		launcherOutdated: {
-			button: (
-				<Button onClick={() => updatePortable.mutateAsync()}>Update</Button>
-			),
-			helperText: (
-				<div className="-mb-2">
-					<p>New launcher version available!</p>
-					<p className="text-xs text-textDark">
-						Please update to the latest version
 					</p>
 				</div>
 			)

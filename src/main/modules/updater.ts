@@ -1,13 +1,10 @@
 import path from 'node:path';
-import { exec, spawn } from 'node:child_process';
+import { exec } from 'node:child_process';
 import os from 'node:os';
 
 import fetch from 'node-fetch';
 import fs from 'fs-extra';
 import yauzl from 'yauzl-promise';
-import { app } from 'electron';
-import { autoUpdater } from 'electron-updater';
-import logger from 'electron-log';
 
 import { mainWindow } from '~main/index';
 import { formatDuration, formatFileSize } from '~common/utils';
@@ -18,11 +15,6 @@ import Preferences from './preferences';
 import Observable from './observable';
 import resumableFetch, { type FetchProgress } from './resumableFetch';
 
-logger.transports.file.level = 'info';
-autoUpdater.logger = logger;
-autoUpdater.autoDownload = false;
-autoUpdater.disableWebInstaller = true;
-
 const resolveBaseUrl = () => {
         const { launcherUpdateUrl } = Preferences.data;
         return launcherUpdateUrl ?? DEFAULT_LAUNCHER_UPDATE_URL;
@@ -30,14 +22,6 @@ const resolveBaseUrl = () => {
 
 const resolvePatchUrl = (filePath: string) =>
         new URL(`patches/${filePath.replace(/^\/+/, '')}`, resolveBaseUrl()).toString();
-
-const configureAutoUpdaterFeed = () => {
-        try {
-                autoUpdater.setFeedURL({ url: new URL('patches/', resolveBaseUrl()).toString() });
-        } catch (e) {
-                Logger.log('Failed to configure launcher update feed URL', 'error', e);
-        }
-};
 
 // const isReadOnly = async (filePath: string) => {
 // 	try {
@@ -132,15 +116,14 @@ const fetchVersion = async (filePath: string) => {
 };
 
 type UpdaterState =
-	| 'needsValidation'
-	| 'verifying'
-	| 'serverUnreachable'
-	| 'noClient'
-	| 'launcherOutdated'
-	| 'updateAvailable'
-	| 'updating'
-	| 'upToDate'
-	| 'failed';
+        | 'needsValidation'
+        | 'verifying'
+        | 'serverUnreachable'
+        | 'noClient'
+        | 'updateAvailable'
+        | 'updating'
+        | 'upToDate'
+        | 'failed';
 
 export type UpdaterStatus = {
 	state: UpdaterState;
@@ -230,77 +213,13 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 		this.status = { state: 'needsValidation' };
 	}
 
-	async updateLauncher() {
-		const { clientDir, isPortable } = Preferences.data;
-		if (!clientDir) return;
-
-		Logger.log(`Downloading launcher update...`);
-		this.status = {
-			state: 'updating',
-			progress: -1,
-			message: `Downloading new launcher...`
-		};
-		if (isPortable) {
-			const newPath = await fetchFile(
-				`CenturionLauncher.exe`,
-				(p: FetchProgress) => {
-					const progress =
-						(p.done + p.initialPartial) / (p.total + p.initialPartial);
-					const percent = Math.round(progress * 100);
-					const elapsed = (Date.now() - p.startedAt) / 1000;
-					const rate = p.done / elapsed;
-					const eta = formatDuration(p.total / rate - elapsed);
-					this.status = {
-						state: 'updating',
-						progress,
-						message: `Downloading launcher update... ${percent}% (${eta} remaining)`
-					};
-				}
-			);
-
-			const scriptPath = path.join(clientDir, 'update-script.bat');
-			const oldPath = path.join(clientDir, 'CenturionLauncher.exe');
-
-			const updateScript = `
-	@echo off
-	setlocal
-	echo Preparing to update the launcher. Please wait...
-	timeout /t 5
-	echo Updating the launcher...
-	move /y "${newPath}" "${oldPath}"
-	echo Update successful! Starting the new launcher...
-	start "" "${oldPath}"
-	endlocal
-		`;
-
-			await fs.writeFile(scriptPath, updateScript);
-			Logger.log(`Running update script...`);
-			const child = spawn('cmd.exe', ['/c', scriptPath], {
-				detached: true,
-				stdio: 'ignore'
-			});
-			child.unref();
-			app.quit();
-                } else {
-                        configureAutoUpdaterFeed();
-                        autoUpdater.on(
-                                'download-progress',
-                                ({ percent, bytesPerSecond, total, transferred }) => {
-					const eta = formatDuration((total - transferred) / bytesPerSecond);
-					this.status = {
-						state: 'updating',
-						progress: percent / 100,
-						message: `Downloading launcher update... ${percent.toFixed(
-							0
-						)}% (${eta} remaining)`
-					};
-				}
-			);
-			await autoUpdater.downloadUpdate();
-			Logger.log(`Running update script...`);
-			autoUpdater.quitAndInstall();
-		}
-	}
+        async updateLauncher() {
+                Logger.log('Launcher updates are currently disabled.');
+                this.status = {
+                        state: 'failed',
+                        message: 'Launcher updates are currently disabled. Please download the latest release manually.'
+                };
+        }
 
 	async verify() {
                 const { clientDir, optionalPatches, selectedRealm, isPortable } =
@@ -318,25 +237,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				return;
 			}
 
-			if (isPortable) {
-				await fs.remove(path.join(clientDir, 'update-script.bat'));
-                                const version = await fetchVersion('latest.yaml');
-				if (version.match(/version: (.*)/)?.[1] !== app.getVersion()) {
-					this.status = { state: 'launcherOutdated' };
-					return;
-				}
-			} else {
-                                try {
-                                        configureAutoUpdaterFeed();
-                                        const update = await autoUpdater.checkForUpdates();
-                                        if (update) {
-                                                this.status = { state: 'launcherOutdated' };
-						return;
-					}
-				} catch (e) {
-					Logger.log(`Failed to check for launcher updates`, 'error', e);
-				}
-			}
+                        if (isPortable) {
+                                await fs.remove(path.join(clientDir, 'update-script.bat'));
+                        }
 
 			if (os.platform() === 'win32' && clientDir.length > 220) {
 				this.status = {
