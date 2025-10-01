@@ -401,7 +401,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                                 console.error(_error);
                                                         }
                                                 }
-                                                delete this.#versionCache[name];
                                         }
                                         continue;
                                 }
@@ -499,7 +498,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                 );
                                                 try {
                                                         await fs.ensureDir(path.dirname(destination));
-                                                        await fs.move(source, destination, { overwrite: true });
+                                                        await fs.copy(source, destination, { overwrite: true });
                                                         movedAny = true;
                                                 } catch (e) {
                                                         console.error(e);
@@ -519,7 +518,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         }
 
                                         this.#versionCache[name] = version;
-                                        await fs.remove(cachePath);
                                         return true;
                                 };
 
