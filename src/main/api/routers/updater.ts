@@ -10,6 +10,5 @@ export const updaterRouter = createTRPCRouter({
 	update: publicProcedure
 		.input(z.boolean().optional())
 		.mutation(({ input }) => Updater.update(input)),
-	updatePortable: publicProcedure.mutation(() => Updater.updateLauncher()),
-	observe: publicProcedure.subscription(() => Updater.observe())
+        observe: publicProcedure.subscription(() => Updater.observe())
 });
