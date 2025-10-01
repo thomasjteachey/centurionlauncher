@@ -22,10 +22,9 @@ const App = () => {
 				<>
 					<div className="flex select-none items-center gap-4 self-start">
 						<img src={WoWLogo} alt="Logo" className="shrink-0" />
-						<h1 className="uppercase">
-							<p className="text-2xl">Legionnaire</p>
-							<p className="color">Centurion</p>
-						</h1>
+                                                <h1 className="uppercase">
+                                                        <p className="text-2xl">Centurion</p>
+                                                </h1>
 					</div>
 
 					<div className="flex min-h-0 flex-grow select-none flex-col items-center gap-2">
