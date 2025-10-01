@@ -495,7 +495,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         if (await restoreFromCache()) {
                                                 continue;
                                         }
-
                                         delete this.#versionCache[name];
                                         needsDownload = true;
                                         downloadReason = 'update';
