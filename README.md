@@ -25,3 +25,5 @@ $ npm run dev
 ```bash
 $ npm run dist
 ```
+
+> The Windows build now produces only the portable executable (no installer).
