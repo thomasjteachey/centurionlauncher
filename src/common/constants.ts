@@ -1,7 +1,9 @@
+export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://centurionpvp.com/downloads/';
+
 export const FileMap: Record<
-	string,
-	{
-		extractPath: string;
+        string,
+        {
+                extractPath: string;
 		plus?: true;
 		optional?: true;
 		label?: string;

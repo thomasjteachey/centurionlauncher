@@ -1,12 +1,22 @@
 import { z } from 'zod';
 
+import { DEFAULT_LAUNCHER_UPDATE_URL } from './constants';
+
 /**
  * Zod type wrappers for use with form inputs
  */
+const protocolRegex = /^[a-zA-Z][a-zA-Z\d+\-.]*:\/\//;
+
+const normalizeLauncherUrl = (value: string) => {
+        const trimmed = value.trim();
+        const withProtocol = protocolRegex.test(trimmed) ? trimmed : `http://${trimmed}`;
+        return withProtocol.endsWith('/') ? withProtocol : `${withProtocol}/`;
+};
+
 const f = {
-	boolean: (defaultValue?: boolean) =>
-		z.boolean().nullish().default(!!defaultValue),
-	number: (defaultValue?: number, val?: (v: z.ZodNumber) => z.ZodNumber) =>
+        boolean: (defaultValue?: boolean) =>
+                z.boolean().nullish().default(!!defaultValue),
+        number: (defaultValue?: number, val?: (v: z.ZodNumber) => z.ZodNumber) =>
 		z.preprocess(
 			v =>
 				v === '' || v === undefined
@@ -19,14 +29,20 @@ const f = {
 };
 
 export const PreferencesSchema = z.object({
-	isPortable: z.boolean().optional(),
-	clientDir: z.string().optional(),
-	reopenLauncher: f.boolean(),
-	cleanWdb: f.boolean(true),
-	rememberPosition: f.boolean(),
-	windowPosition: z
-		.object({
-			x: z.number(),
+        isPortable: z.boolean().optional(),
+        clientDir: z.string().optional(),
+        reopenLauncher: f.boolean(),
+        cleanWdb: f.boolean(true),
+        rememberPosition: f.boolean(),
+        launcherUpdateUrl: z
+                .string()
+                .trim()
+                .min(1)
+                .transform(normalizeLauncherUrl)
+                .default(DEFAULT_LAUNCHER_UPDATE_URL),
+        windowPosition: z
+                .object({
+                        x: z.number(),
 			y: z.number(),
 			width: z.number(),
 			height: z.number()
