@@ -273,8 +273,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 	}
 
 	async verify() {
-		const { clientDir, optionalPatches, plusEnabled, isPortable } =
-			Preferences.data;
+                const { clientDir, optionalPatches, selectedRealm, isPortable } =
+                        Preferences.data;
+                const realmKey = selectedRealm ?? 'legionnaire';
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -334,68 +335,75 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			await this.#loadCache(clientDir);
 			let toDownload = 0;
 
-			for (const [name, meta] of Object.entries(FileMap)) {
-				const version = await fetchVersion(`${name}.version`);
+                        for (const [name, meta] of Object.entries(FileMap)) {
+                                const version = await fetchVersion(`${name}.version`);
 
-				const cachePath = path.join(
-					clientDir,
-					'.launcher',
-					'cached',
-					name,
-					version
-				);
+                                const shouldCache = !!meta.optional || !!meta.realms;
+                                const cachePath = shouldCache
+                                        ? path.join(
+                                                  clientDir,
+                                                  '.launcher',
+                                                  'cached',
+                                                  name,
+                                                  version
+                                          )
+                                        : undefined;
 
-				// Check unused optional
-				if (
-					(meta.plus && !plusEnabled) ||
-					(meta.optional && !optionalPatches.includes(name))
-				) {
-					if (this.#versionCache[name]) {
-						// Move files to cache
-						await fs.ensureDir(cachePath);
-						for (const file of this.#fileCache[name] ?? []) {
-							try {
-								await fs.move(
-									path.join(clientDir, meta.extractPath, file),
-									path.join(cachePath, file)
-								);
-							} catch (e) {
-								console.error(e);
-							}
-						}
-						delete this.#versionCache[name];
-					}
-					continue;
-				}
+                                const isOptionalEnabled =
+                                        !meta.optional || optionalPatches.includes(name);
+                                const isRealmEnabled =
+                                        !meta.realms || meta.realms.includes(realmKey);
+                                const shouldUse = isOptionalEnabled && isRealmEnabled;
 
-				// Check version
-				if (this.#versionCache[name] === version) continue;
+                                if (!shouldUse) {
+                                        if (shouldCache && this.#versionCache[name]) {
+                                                // Move files to cache
+                                                await fs.ensureDir(cachePath!);
+                                                for (const file of this.#fileCache[name] ?? []) {
+                                                        try {
+                                                                await fs.move(
+                                                                        path.join(clientDir, meta.extractPath, file),
+                                                                        path.join(cachePath!, file)
+                                                                );
+                                                        } catch (e) {
+                                                                console.error(e);
+                                                        }
+                                                }
+                                                delete this.#versionCache[name];
+                                        }
+                                        continue;
+                                }
 
-				if (await fs.exists(cachePath)) {
-					// Move files from cache
-					for (const file of this.#fileCache[name] ?? []) {
-						try {
-							await fs.move(
-								path.join(cachePath, file),
-								path.join(clientDir, meta.extractPath, file)
-							);
-						} catch (e) {
-							console.error(e);
-						}
-					}
-					this.#versionCache[name] = version;
-					await fs.remove(cachePath);
-					continue;
-				}
+                                // Check version
+                                if (this.#versionCache[name] === version) continue;
 
-				// Remove old cached versions
-				await fs.remove(path.dirname(cachePath));
+                                if (shouldCache && cachePath && (await fs.exists(cachePath))) {
+                                        // Move files from cache
+                                        for (const file of this.#fileCache[name] ?? []) {
+                                                try {
+                                                        await fs.move(
+                                                                path.join(cachePath, file),
+                                                                path.join(clientDir, meta.extractPath, file)
+                                                        );
+                                                } catch (e) {
+                                                        console.error(e);
+                                                }
+                                        }
+                                        this.#versionCache[name] = version;
+                                        await fs.remove(cachePath);
+                                        continue;
+                                }
 
-				// Add to download
-				Logger.log(`New ${name} version available: ${version}`);
-				delete this.#versionCache[name];
-				toDownload += await fetchSize(`${name}.zip`);
-			}
+                                // Remove old cached versions
+                                if (shouldCache && cachePath) {
+                                        await fs.remove(path.dirname(cachePath));
+                                }
+
+                                // Add to download
+                                Logger.log(`New ${name} version available: ${version}`);
+                                delete this.#versionCache[name];
+                                toDownload += await fetchSize(`${name}.zip`);
+                        }
 
 			await this.#saveCache(clientDir);
 
@@ -424,8 +432,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 		}
 	}
 
-	async update(force?: boolean) {
-		const { clientDir, optionalPatches, plusEnabled } = Preferences.data;
+        async update(force?: boolean) {
+                const { clientDir, optionalPatches, selectedRealm } = Preferences.data;
+                const realmKey = selectedRealm ?? 'legionnaire';
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -496,11 +505,22 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				}
 			};
 
-			for (const [name, meta] of Object.entries(FileMap)) {
-				if (meta.plus && !plusEnabled) continue;
-				if (meta.optional && !optionalPatches.includes(name)) continue;
+                        for (const [name, meta] of Object.entries(FileMap)) {
+                                const isOptionalEnabled =
+                                        !meta.optional || optionalPatches.includes(name);
+                                const isRealmEnabled =
+                                        !meta.realms || meta.realms.includes(realmKey);
+                                const shouldUse = isOptionalEnabled && isRealmEnabled;
+                                const shouldCache = !!meta.optional || !!meta.realms;
 
-				if (this.#versionCache[name] && !force) continue;
+                                if (!shouldUse) {
+                                        if (force) {
+                                                delete this.#versionCache[name];
+                                        }
+                                        continue;
+                                }
+
+                                if (this.#versionCache[name] && !force) continue;
 
 				Logger.log(`Downloading ${name} files...`);
 				const file = await fetchFile(`${name}.zip`, (p: FetchProgress) => {
@@ -522,12 +542,12 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 					progress: -1,
 					message: `Extracting ${name}...`
 				};
-				await extractArchive(
-					name,
-					file,
-					path.join(clientDir, meta.extractPath),
-					!!meta.plus || !!meta.optional
-				);
+                                await extractArchive(
+                                        name,
+                                        file,
+                                        path.join(clientDir, meta.extractPath),
+                                        shouldCache
+                                );
 
 				this.#versionCache[name] = await fetchVersion(`${name}.version`);
 				await this.#saveCache(clientDir);

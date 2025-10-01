@@ -1,6 +1,7 @@
 import cls from 'classnames';
 import { useState, type ReactNode } from 'react';
 
+import { REALMS, type RealmId } from '~common/constants';
 import { api } from '~renderer/utils/api';
 
 type LargeButtonProps = {
@@ -30,44 +31,41 @@ const LargeButton = ({
 );
 
 const RealmSwitch = () => {
-	const { data: pref } = api.preferences.get.useQuery();
-	const setPref = api.preferences.set.useMutation();
+        const { data: pref } = api.preferences.get.useQuery();
+        const setPref = api.preferences.set.useMutation();
 
-	const invalidate = api.updater.invalidate.useMutation();
+        const invalidate = api.updater.invalidate.useMutation();
 
-	const [isLoading, setIsLoading] = useState(false);
-	api.updater.observe.useSubscription(undefined, {
-		onData: data =>
-			setIsLoading(data.state === 'verifying' || data.state === 'updating')
-	});
+        const [isLoading, setIsLoading] = useState(false);
+        api.updater.observe.useSubscription(undefined, {
+                onData: data =>
+                        setIsLoading(data.state === 'verifying' || data.state === 'updating')
+        });
 
-	const onClick = async (plusEnabled: boolean) => {
-		if (isLoading) return;
-		await setPref.mutateAsync({ plusEnabled });
-		await invalidate.mutateAsync();
-	};
+        const onClick = async (realm: RealmId) => {
+                if (isLoading) return;
+                if (pref?.selectedRealm === realm) return;
+                await setPref.mutateAsync({ selectedRealm: realm });
+                await invalidate.mutateAsync();
+        };
 
-	return (
-		<>
-			<p className="text-2xl">Select server:</p>
-			<div className="flex gap-2">
-				<LargeButton
-					active={!pref?.plusEnabled}
-					loading={isLoading}
-					onClick={() => onClick(false)}
-				>
-					Legionnaire
-				</LargeButton>
-				<LargeButton
-					active={!!pref?.plusEnabled}
-					loading={isLoading}
-					onClick={() => onClick(true)}
-				>
-					Legionnaire+
-				</LargeButton>
-			</div>
-		</>
-	);
+        return (
+                <>
+                        <p className="text-2xl">Select server:</p>
+                        <div className="flex gap-2">
+                                {Object.entries(REALMS).map(([id, meta]) => (
+                                        <LargeButton
+                                                key={id}
+                                                active={pref?.selectedRealm === id}
+                                                loading={isLoading}
+                                                onClick={() => onClick(id as RealmId)}
+                                        >
+                                                {meta.label}
+                                        </LargeButton>
+                                ))}
+                        </div>
+                </>
+        );
 };
 
 export default RealmSwitch;

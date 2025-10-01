@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
-import { DEFAULT_LAUNCHER_UPDATE_URL, DEFAULT_REALMLIST } from './constants';
+import {
+        DEFAULT_LAUNCHER_UPDATE_URL,
+        DEFAULT_REALMLIST,
+        REALM_IDS
+} from './constants';
 
 /**
  * Zod type wrappers for use with form inputs
@@ -44,12 +48,12 @@ export const PreferencesSchema = z.object({
         windowPosition: z
                 .object({
                         x: z.number(),
-			y: z.number(),
-			width: z.number(),
-			height: z.number()
-		})
-		.nullish(),
-	plusEnabled: f.boolean(false),
-	optionalPatches: z.array(z.string()).default([])
+                        y: z.number(),
+                        width: z.number(),
+                        height: z.number()
+                })
+                .nullish(),
+        selectedRealm: z.enum(REALM_IDS).default('legionnaire'),
+        optionalPatches: z.array(z.string()).default([])
 });
 export type PreferencesSchema = z.infer<typeof PreferencesSchema>;
