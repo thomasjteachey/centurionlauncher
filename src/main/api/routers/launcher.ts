@@ -20,10 +20,13 @@ export const launcherRouter = createTRPCRouter({
 		Logger.log(`Launching ${clientPath}...`);
 		if (await isGameRunning()) return false;
 
-		if (cleanWdb) {
-			Logger.log('Cleaning up WDB...');
-			await fs.remove(path.join(clientPath, 'WDB'));
-		}
+                if (cleanWdb) {
+                        Logger.log('Cleaning up WDB...');
+                        await fs.remove(path.join(clientDir, 'WDB'));
+                }
+
+                Logger.log('Cleaning up Cache...');
+                await fs.remove(path.join(clientDir, 'Cache'));
 
 		// Make sure config.wtf is correct
 		Logger.log('Checking Config.wtf...');
