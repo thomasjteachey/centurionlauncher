@@ -539,11 +539,11 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				message: 'Preparing files...'
 			};
 
-                        const extractArchive = async (
-                                name: string,
-                                file: string,
-                                filePath: string
-                        ) => {
+                                const extractArchive = async (
+                                        name: string,
+                                        file: string,
+                                        filePath: string
+                                ) => {
                                 let finished = false;
                                 const archive = await yauzl.open(file);
                                 const extractedFiles: string[] = [];
@@ -557,10 +557,49 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                         await fs.ensureDir(path.dirname(dest));
                                                         const readStream = await entry.openReadStream();
                                                         const writeStream = fs.createWriteStream(dest);
+                                                        const totalBytes = entry.uncompressedSize;
+                                                        const hasKnownSize = Number.isFinite(totalBytes) && totalBytes > 0;
+                                                        if (hasKnownSize) {
+                                                                this.status = {
+                                                                        state: 'updating',
+                                                                        progress: 0,
+                                                                        message: `Extracting ${name}... 0%`
+                                                                };
+                                                        }
+
                                                         await new Promise((resolve, reject) => {
-                                                                readStream.pipe(writeStream);
-                                                                writeStream.on('finish', resolve);
+                                                                let extractedBytes = 0;
+
+                                                                readStream.on('data', (chunk: Buffer) => {
+                                                                        if (!hasKnownSize) return;
+
+                                                                        extractedBytes += chunk.length;
+                                                                        const progress = Math.min(
+                                                                                extractedBytes / totalBytes,
+                                                                                1
+                                                                        );
+                                                                        const percent = Math.round(progress * 100);
+                                                                        this.status = {
+                                                                                state: 'updating',
+                                                                                progress,
+                                                                                message: `Extracting ${name}... ${percent}%`
+                                                                        };
+                                                                });
+
+                                                                readStream.on('error', reject);
                                                                 writeStream.on('error', reject);
+                                                                writeStream.on('finish', () => {
+                                                                        if (hasKnownSize) {
+                                                                                this.status = {
+                                                                                        state: 'updating',
+                                                                                        progress: 1,
+                                                                                        message: `Extracting ${name}... 100%`
+                                                                                };
+                                                                        }
+                                                                        resolve(undefined);
+                                                                });
+
+                                                                readStream.pipe(writeStream);
                                                         });
 
                                                         extractedFiles.push(entry.filename);
