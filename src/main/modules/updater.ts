@@ -132,8 +132,9 @@ export type UpdaterStatus = {
 };
 
 class UpdaterClass extends Observable<UpdaterStatus> {
-	#versionCache: Record<string, string> = {};
+        #versionCache: Record<string, string> = {};
         #fileCache: Record<string, string[]> = {};
+        #pendingInvalidations = new Set<string>();
 
         #cachePatchFiles = async (
                 clientDir: string,
@@ -168,10 +169,11 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 	#loadCache = async (clientDir: string) => {
 		await fs.ensureDir(path.join(clientDir, '.launcher'));
 
-		const versionCache = path.join(clientDir, '.launcher', 'update-cache.json');
-		this.#versionCache = (await fs.exists(versionCache))
-			? await fs.readJSON(versionCache)
-			: {};
+                const versionCache = path.join(clientDir, '.launcher', 'update-cache.json');
+                this.#versionCache = (await fs.exists(versionCache))
+                        ? await fs.readJSON(versionCache)
+                        : {};
+                this.#pendingInvalidations.clear();
 
 		const fileCache = path.join(clientDir, '.launcher', 'file-cache.json');
 		this.#fileCache = (await fs.exists(fileCache))
@@ -321,6 +323,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                         }
                                                 }
                                         }
+                                        this.#pendingInvalidations.delete(name);
                                         continue;
                                 }
 
@@ -436,6 +439,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         }
 
                                         this.#versionCache[name] = version;
+                                        this.#pendingInvalidations.delete(name);
                                         return true;
                                 };
 
@@ -446,30 +450,34 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                                 if (cachedVersion === version) {
                                         if (await hasAllFiles()) {
+                                                this.#pendingInvalidations.delete(name);
                                                 continue;
                                         }
 
                                         if (await restoreFromCache()) {
+                                                this.#pendingInvalidations.delete(name);
                                                 continue;
                                         }
 
                                         Logger.log(
                                                 `Missing files detected for ${name}. Scheduling download to restore them.`
                                         );
-                                        delete this.#versionCache[name];
+                                        this.#pendingInvalidations.add(name);
                                         needsDownload = true;
                                         downloadReason = 'missing';
                                 } else if (!cachedVersion) {
                                         Logger.log(
                                                 `No version metadata found for ${name}. Scheduling download to rebuild the cache.`
                                         );
+                                        this.#pendingInvalidations.add(name);
                                         needsDownload = true;
                                         downloadReason = 'metadata';
                                 } else {
                                         if (await restoreFromCache()) {
+                                                this.#pendingInvalidations.delete(name);
                                                 continue;
                                         }
-                                        delete this.#versionCache[name];
+                                        this.#pendingInvalidations.add(name);
                                         needsDownload = true;
                                         downloadReason = 'update';
                                 }
@@ -644,10 +652,12 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         if (force) {
                                                 delete this.#versionCache[name];
                                         }
+                                        this.#pendingInvalidations.delete(name);
                                         continue;
                                 }
 
-                                if (this.#versionCache[name] && !force) continue;
+                                if (this.#versionCache[name] && !force && !this.#pendingInvalidations.has(name))
+                                        continue;
 
 				Logger.log(`Downloading ${name} files...`);
 				const file = await fetchFile(`${name}.zip`, (p: FetchProgress) => {
@@ -677,6 +687,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                                 const version = await fetchVersion(`${name}.version`);
                                 this.#versionCache[name] = version;
+                                this.#pendingInvalidations.delete(name);
 
                                 if (shouldCache) {
                                         await this.#cachePatchFiles(
