@@ -18,7 +18,8 @@ export const patchConfig = async () => {
         // Patch WoW.exe
         const exePath = path.join(clientDir, 'WoW.exe');
         const buffer = await fs.readFile(exePath);
-        buffer.write(realmConfig.build.string, 0x5f3a00, 6);
+        buffer.fill(0x00, 0x5f3a00, 0x5f3a00 + 6);
+        buffer.write(realmConfig.build.string, 0x5f3a00, realmConfig.build.string.length);
         buffer.writeUInt16LE(realmConfig.build.number, 0x4c99f0);
 
 	// SIG & MD5 Protection Remover
@@ -28,10 +29,8 @@ export const patchConfig = async () => {
 			[0x415a25, 0xeb],
 			[0x415a3f, 0x03],
 			[0x415a95, 0x03],
-			[0x415b46, 0xeb],
-			[0x415b5f, [0xb8, 0x03, 0x00, 0x00, 0x00, 0xeb, 0xed]],
-			[0x4c99f0, 0x35],
-			[0x5f3a04, 0x31]
+                        [0x415b46, 0xeb],
+                        [0x415b5f, [0xb8, 0x03, 0x00, 0x00, 0x00, 0xeb, 0xed]]
 		] as [number, number | number[]][]
 	).forEach(([offset, value]) => {
 		if (Array.isArray(value)) {
