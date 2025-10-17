@@ -18,7 +18,8 @@ export const patchConfig = async () => {
         // Patch WoW.exe
         const exePath = path.join(clientDir, 'WoW.exe');
         const buffer = await fs.readFile(exePath);
-        buffer.write(realmConfig.build.string, 0x5f3a00, 6);
+        buffer.fill(0x00, 0x5f3a00, 0x5f3a00 + 6);
+        buffer.write(realmConfig.build.string, 0x5f3a00, realmConfig.build.string.length);
         buffer.writeUInt16LE(realmConfig.build.number, 0x4c99f0);
 
 	// SIG & MD5 Protection Remover

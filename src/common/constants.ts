@@ -14,14 +14,19 @@ type BuildInfo = {
         number: number;
 };
 
-const BASE_BUILD: BuildInfo = {
+const BUILD_12340: BuildInfo = {
         string: '12340',
         number: 12340
 };
 
-const PLUS_BUILD: BuildInfo = {
+const BUILD_12341: BuildInfo = {
         string: '12341',
         number: 12341
+};
+
+const BUILD_12342: BuildInfo = {
+        string: '12342',
+        number: 12342
 };
 
 export const REALMS: Record<
@@ -35,22 +40,22 @@ export const REALMS: Record<
         legionnaire: {
                 label: 'Legionnaire',
                 realmName: 'Legionnaire',
-                build: BASE_BUILD
+                build: BUILD_12340
         },
         legionnaire_plus: {
                 label: 'Legionnaire+',
                 realmName: 'Legionnaire Plus',
-                build: PLUS_BUILD
+                build: BUILD_12341
         },
         barracks: {
                 label: 'Barracks',
                 realmName: 'Barracks',
-                build: BASE_BUILD
+                build: BUILD_12342
         },
         barracks_plus: {
                 label: 'Barracks+',
                 realmName: 'Barracks Plus',
-                build: PLUS_BUILD
+                build: BUILD_12342
         }
 };
 
