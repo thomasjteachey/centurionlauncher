@@ -259,16 +259,32 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			}
 
 			Logger.log(`Verifying client files at ${path.join(clientDir)}...`);
-			this.status = {
-				state: 'verifying',
-				progress: -1,
-				message: 'Looking for updates...'
-			};
+                        this.status = {
+                                state: 'verifying',
+                                progress: 0,
+                                message: 'Looking for updates...'
+                        };
 
-			await this.#loadCache(clientDir);
-			let toDownload = 0;
+                        await this.#loadCache(clientDir);
+                        let toDownload = 0;
 
-                        for (const [name, meta] of Object.entries(FileMap)) {
+                        const verificationEntries = Object.entries(FileMap);
+                        const totalVerificationEntries = verificationEntries.length;
+                        let processedVerificationEntries = 0;
+
+                        for (const [name, meta] of verificationEntries) {
+                                processedVerificationEntries += 1;
+                                const verificationProgress =
+                                        totalVerificationEntries === 0
+                                                ? -1
+                                                : processedVerificationEntries / totalVerificationEntries;
+                                const displayName = meta.label ?? name;
+                                this.status = {
+                                        state: 'verifying',
+                                        progress: verificationProgress,
+                                        message: `Looking for updates... (${displayName})`
+                                };
+
                                 const version = await fetchVersion(`${name}.version`);
 
                                 const shouldCache = !!meta.optional || !!meta.realms;
@@ -539,11 +555,11 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				message: 'Preparing files...'
 			};
 
-                        const extractArchive = async (
-                                name: string,
-                                file: string,
-                                filePath: string
-                        ) => {
+                                const extractArchive = async (
+                                        name: string,
+                                        file: string,
+                                        filePath: string
+                                ) => {
                                 let finished = false;
                                 const archive = await yauzl.open(file);
                                 const extractedFiles: string[] = [];
@@ -557,10 +573,49 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                         await fs.ensureDir(path.dirname(dest));
                                                         const readStream = await entry.openReadStream();
                                                         const writeStream = fs.createWriteStream(dest);
+                                                        const totalBytes = entry.uncompressedSize;
+                                                        const hasKnownSize = Number.isFinite(totalBytes) && totalBytes > 0;
+                                                        if (hasKnownSize) {
+                                                                this.status = {
+                                                                        state: 'updating',
+                                                                        progress: 0,
+                                                                        message: `Extracting ${name}... 0%`
+                                                                };
+                                                        }
+
                                                         await new Promise((resolve, reject) => {
-                                                                readStream.pipe(writeStream);
-                                                                writeStream.on('finish', resolve);
+                                                                let extractedBytes = 0;
+
+                                                                readStream.on('data', (chunk: Buffer) => {
+                                                                        if (!hasKnownSize) return;
+
+                                                                        extractedBytes += chunk.length;
+                                                                        const progress = Math.min(
+                                                                                extractedBytes / totalBytes,
+                                                                                1
+                                                                        );
+                                                                        const percent = Math.round(progress * 100);
+                                                                        this.status = {
+                                                                                state: 'updating',
+                                                                                progress,
+                                                                                message: `Extracting ${name}... ${percent}%`
+                                                                        };
+                                                                });
+
+                                                                readStream.on('error', reject);
                                                                 writeStream.on('error', reject);
+                                                                writeStream.on('finish', () => {
+                                                                        if (hasKnownSize) {
+                                                                                this.status = {
+                                                                                        state: 'updating',
+                                                                                        progress: 1,
+                                                                                        message: `Extracting ${name}... 100%`
+                                                                                };
+                                                                        }
+                                                                        resolve(undefined);
+                                                                });
+
+                                                                readStream.pipe(writeStream);
                                                         });
 
                                                         extractedFiles.push(entry.filename);
