@@ -259,16 +259,32 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			}
 
 			Logger.log(`Verifying client files at ${path.join(clientDir)}...`);
-			this.status = {
-				state: 'verifying',
-				progress: -1,
-				message: 'Looking for updates...'
-			};
+                        this.status = {
+                                state: 'verifying',
+                                progress: 0,
+                                message: 'Looking for updates...'
+                        };
 
-			await this.#loadCache(clientDir);
-			let toDownload = 0;
+                        await this.#loadCache(clientDir);
+                        let toDownload = 0;
 
-                        for (const [name, meta] of Object.entries(FileMap)) {
+                        const verificationEntries = Object.entries(FileMap);
+                        const totalVerificationEntries = verificationEntries.length;
+                        let processedVerificationEntries = 0;
+
+                        for (const [name, meta] of verificationEntries) {
+                                processedVerificationEntries += 1;
+                                const verificationProgress =
+                                        totalVerificationEntries === 0
+                                                ? -1
+                                                : processedVerificationEntries / totalVerificationEntries;
+                                const displayName = meta.label ?? name;
+                                this.status = {
+                                        state: 'verifying',
+                                        progress: verificationProgress,
+                                        message: `Looking for updates... (${displayName})`
+                                };
+
                                 const version = await fetchVersion(`${name}.version`);
 
                                 const shouldCache = !!meta.optional || !!meta.realms;
