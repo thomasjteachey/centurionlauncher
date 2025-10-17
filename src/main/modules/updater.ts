@@ -308,18 +308,41 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                                 if (!shouldUse) {
                                         if (shouldCache && this.#versionCache[name]) {
-                                                // Move files to cache
-                                                await fs.remove(cachePath!);
-                                                await fs.ensureDir(cachePath!);
-                                                for (const file of this.#fileCache[name] ?? []) {
-                                                        try {
-                                                                await fs.move(
-                                                                        path.join(clientDir, meta.extractPath, file),
-                                                                        path.join(cachePath!, file),
-                                                                        { overwrite: true }
+                                                // Move files to cache without nuking an existing copy when there's
+                                                // nothing new to move. This prevents losing cached data for realms
+                                                // that remain disabled across multiple verification runs.
+                                                const filesToMove = await Promise.all(
+                                                        (this.#fileCache[name] ?? []).map(async file => {
+                                                                const source = path.join(
+                                                                        clientDir,
+                                                                        meta.extractPath,
+                                                                        file
                                                                 );
-                                                        } catch (_error) {
-                                                                console.error(_error);
+                                                                return {
+                                                                        file,
+                                                                        source,
+                                                                        exists: await fs.pathExists(source)
+                                                                };
+                                                        })
+                                                );
+
+                                                const existingSources = filesToMove.filter(({ exists }) => exists);
+
+                                                if (existingSources.length !== 0) {
+                                                        await fs.ensureDir(path.join(clientDir, '.launcher', 'cached'));
+                                                        await fs.remove(cachePath!);
+                                                        await fs.ensureDir(cachePath!);
+
+                                                        for (const { file, source } of existingSources) {
+                                                                try {
+                                                                        const destination = path.join(cachePath!, file);
+                                                                        await fs.ensureDir(path.dirname(destination));
+                                                                        await fs.move(source, destination, {
+                                                                                overwrite: true
+                                                                        });
+                                                                } catch (_error) {
+                                                                        console.error(_error);
+                                                                }
                                                         }
                                                 }
                                         }
