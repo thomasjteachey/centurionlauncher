@@ -16,7 +16,7 @@ abstract class Observable<T> {
 			e.next(this._value);
 			this._listeners.push(e.next);
 			return () => {
-				this._listeners.filter(v => v !== e.next);
+				this._listeners = this._listeners.filter(v => v !== e.next);
 			};
 		});
 	}
