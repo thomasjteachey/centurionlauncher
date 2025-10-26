@@ -8,7 +8,7 @@ import yauzl from 'yauzl-promise';
 
 import { mainWindow } from '~main/index';
 import { formatDuration, formatFileSize } from '~common/utils';
-import { DEFAULT_LAUNCHER_UPDATE_URL, FileMap } from '~common/constants';
+import { DEFAULT_LAUNCHER_UPDATE_URL, FileMap, type RealmId } from '~common/constants';
 
 import Logger from './logger';
 import Preferences from './preferences';
@@ -106,13 +106,84 @@ const fetchSize = async (filePath: string) => {
 };
 
 const fetchVersion = async (filePath: string) => {
-	try {
+        try {
                 const response = await fetch(resolvePatchUrl(filePath));
-		return response.text();
-	} catch (e) {
-		Logger.log(`Failed to download ${filePath}`, 'error', e);
-		throw Error(`Failed to download ${filePath}`);
-	}
+                return response.text();
+        } catch (e) {
+                Logger.log(`Failed to download ${filePath}`, 'error', e);
+                throw Error(`Failed to download ${filePath}`);
+        }
+};
+
+type ExtractProgressCallback = (progress: number | null, percent?: number) => void;
+
+const extractArchive = async (
+        name: string,
+        file: string,
+        filePath: string,
+        progressCb?: ExtractProgressCallback
+) => {
+        let finished = false;
+        const archive = await yauzl.open(file);
+        const extractedFiles: string[] = [];
+        try {
+                for await (const entry of archive) {
+                        Logger.log(`Extracting "${entry.filename}"...`);
+                        if (entry.filename.endsWith('/')) {
+                                await fs.ensureDir(path.join(filePath, entry.filename));
+                        } else {
+                                const dest = path.join(filePath, entry.filename);
+                                await fs.ensureDir(path.dirname(dest));
+                                const readStream = await entry.openReadStream();
+                                const writeStream = fs.createWriteStream(dest);
+                                const totalBytes = entry.uncompressedSize;
+                                const hasKnownSize = Number.isFinite(totalBytes) && totalBytes > 0;
+
+                                if (!hasKnownSize) {
+                                        progressCb?.(null);
+                                } else {
+                                        progressCb?.(0, 0);
+                                }
+
+                                await new Promise((resolve, reject) => {
+                                        let extractedBytes = 0;
+
+                                        readStream.on('data', (chunk: Buffer) => {
+                                                if (!hasKnownSize) return;
+
+                                                extractedBytes += chunk.length;
+                                                const progress = Math.min(
+                                                        extractedBytes / (totalBytes ?? 1),
+                                                        1
+                                                );
+                                                const percent = Math.round(progress * 100);
+                                                progressCb?.(progress, percent);
+                                        });
+
+                                        readStream.on('error', reject);
+                                        writeStream.on('error', reject);
+                                        writeStream.on('finish', () => {
+                                                if (hasKnownSize) {
+                                                        progressCb?.(1, 100);
+                                                }
+                                                resolve(undefined);
+                                        });
+
+                                        readStream.pipe(writeStream);
+                                });
+
+                                extractedFiles.push(entry.filename);
+                        }
+                }
+                finished = true;
+        } finally {
+                await archive.close();
+                if (finished) {
+                        Logger.log(`Removing "${file}"...`);
+                        await fs.remove(file);
+                }
+        }
+        return extractedFiles;
 };
 
 type UpdaterState =
@@ -585,84 +656,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				message: 'Preparing files...'
 			};
 
-                                const extractArchive = async (
-                                        name: string,
-                                        file: string,
-                                        filePath: string
-                                ) => {
-                                let finished = false;
-                                const archive = await yauzl.open(file);
-                                const extractedFiles: string[] = [];
-                                try {
-                                        for await (const entry of archive) {
-                                                Logger.log(`Extracting "${entry.filename}"...`);
-                                                if (entry.filename.endsWith('/')) {
-                                                        await fs.ensureDir(path.join(filePath, entry.filename));
-                                                } else {
-                                                        const dest = path.join(filePath, entry.filename);
-                                                        await fs.ensureDir(path.dirname(dest));
-                                                        const readStream = await entry.openReadStream();
-                                                        const writeStream = fs.createWriteStream(dest);
-                                                        const totalBytes = entry.uncompressedSize;
-                                                        const hasKnownSize = Number.isFinite(totalBytes) && totalBytes > 0;
-                                                        if (hasKnownSize) {
-                                                                this.status = {
-                                                                        state: 'updating',
-                                                                        progress: 0,
-                                                                        message: `Extracting ${name}... 0%`
-                                                                };
-                                                        }
-
-                                                        await new Promise((resolve, reject) => {
-                                                                let extractedBytes = 0;
-
-                                                                readStream.on('data', (chunk: Buffer) => {
-                                                                        if (!hasKnownSize) return;
-
-                                                                        extractedBytes += chunk.length;
-                                                                        const progress = Math.min(
-                                                                                extractedBytes / totalBytes,
-                                                                                1
-                                                                        );
-                                                                        const percent = Math.round(progress * 100);
-                                                                        this.status = {
-                                                                                state: 'updating',
-                                                                                progress,
-                                                                                message: `Extracting ${name}... ${percent}%`
-                                                                        };
-                                                                });
-
-                                                                readStream.on('error', reject);
-                                                                writeStream.on('error', reject);
-                                                                writeStream.on('finish', () => {
-                                                                        if (hasKnownSize) {
-                                                                                this.status = {
-                                                                                        state: 'updating',
-                                                                                        progress: 1,
-                                                                                        message: `Extracting ${name}... 100%`
-                                                                                };
-                                                                        }
-                                                                        resolve(undefined);
-                                                                });
-
-                                                                readStream.pipe(writeStream);
-                                                        });
-
-                                                        extractedFiles.push(entry.filename);
-                                                }
-                                        }
-                                        finished = true;
-                                } finally {
-                                        await archive.close();
-                                        if (finished) {
-                                                Logger.log(`Removing "${file}"...`);
-                                                await fs.remove(file);
-                                                this.#fileCache[name] = extractedFiles;
-                                        }
-                                }
-                                return extractedFiles;
-                        };
-
                         for (const [name, meta] of Object.entries(FileMap)) {
                                 const isOptionalEnabled =
                                         !meta.optional || optionalPatches.includes(name);
@@ -705,8 +698,26 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 const extractedFiles = await extractArchive(
                                         name,
                                         file,
-                                        path.join(clientDir, meta.extractPath)
+                                        path.join(clientDir, meta.extractPath),
+                                        (progress, percent) => {
+                                                if (progress === null) {
+                                                        this.status = {
+                                                                state: 'updating',
+                                                                progress: -1,
+                                                                message: `Extracting ${name}...`
+                                                        };
+                                                        return;
+                                                }
+
+                                                this.status = {
+                                                        state: 'updating',
+                                                        progress,
+                                                        message: `Extracting ${name}... ${percent}%`
+                                                };
+                                        }
                                 );
+
+                                this.#fileCache[name] = extractedFiles;
 
                                 const version = await fetchVersion(`${name}.version`);
                                 this.#versionCache[name] = version;
@@ -730,9 +741,196 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			const message =
 				e instanceof Error ? e.message : 'Unexpected error occurred';
 			Logger.log(`Update failed: ${message}`, 'error', e);
-			this.status = { state: 'failed', message };
-		}
-	}
+                        this.status = { state: 'failed', message };
+                }
+        }
+
+        async ensureRealmPatchesFor(realmKey: RealmId) {
+                const { clientDir } = Preferences.data;
+                if (!clientDir) return;
+
+                await this.#loadCache(clientDir);
+
+                let cacheModified = false;
+
+                for (const [name, meta] of Object.entries(FileMap)) {
+                        if (!meta.realms) continue;
+
+                        const shouldUse = meta.realms.includes(realmKey);
+                        if (!shouldUse) continue;
+
+                        const shouldCache = !!meta.optional || !!meta.realms;
+                        const cacheRoot = path.join(clientDir, '.launcher', 'cached', name);
+                        const cachedVersion = this.#versionCache[name];
+                        const cachePath =
+                                shouldCache && cachedVersion
+                                        ? path.join(cacheRoot, cachedVersion)
+                                        : undefined;
+
+                        let expectedFiles = this.#fileCache[name];
+                        if (!expectedFiles) {
+                                expectedFiles = [];
+                                this.#fileCache[name] = expectedFiles;
+                                cacheModified = true;
+                        }
+
+                        const hasAllFiles = async () => {
+                                if (expectedFiles.length === 0) {
+                                        try {
+                                                const entries = await fs.readdir(
+                                                        path.join(clientDir, meta.extractPath)
+                                                );
+                                                const inferredFiles = entries.filter(entry =>
+                                                        entry.toLowerCase().startsWith(name.toLowerCase())
+                                                );
+
+                                                if (inferredFiles.length !== 0) {
+                                                        expectedFiles.splice(
+                                                                0,
+                                                                expectedFiles.length,
+                                                                ...inferredFiles
+                                                        );
+                                                        this.#fileCache[name] = expectedFiles;
+                                                        cacheModified = true;
+                                                }
+                                        } catch (_error) {
+                                                // ignore
+                                        }
+
+                                        if (expectedFiles.length === 0) {
+                                                return false;
+                                        }
+                                }
+
+                                for (const file of expectedFiles) {
+                                        const destination = path.join(
+                                                clientDir,
+                                                meta.extractPath,
+                                                file
+                                        );
+                                        if (!(await fs.pathExists(destination))) {
+                                                return false;
+                                        }
+                                }
+                                return true;
+                        };
+
+                        const restoreFromCache = async () => {
+                                if (!shouldCache || !cachePath || !(await fs.exists(cachePath))) {
+                                        return false;
+                                }
+
+                                const collectCacheFiles = async (dir: string) => {
+                                        const entries = await fs.readdir(dir);
+                                        const files: string[] = [];
+                                        for (const entry of entries) {
+                                                const entryPath = path.join(dir, entry);
+                                                const stats = await fs.stat(entryPath);
+                                                if (stats.isDirectory()) {
+                                                        files.push(...(await collectCacheFiles(entryPath)));
+                                                } else {
+                                                        files.push(
+                                                                path
+                                                                        .relative(cachePath, entryPath)
+                                                                        .replace(/\\/g, '/')
+                                                        );
+                                                }
+                                        }
+                                        return files;
+                                };
+
+                                const filesToRestore =
+                                        expectedFiles.length !== 0
+                                                ? expectedFiles
+                                                : await collectCacheFiles(cachePath);
+
+                                if (filesToRestore.length === 0) return false;
+
+                                let movedAny = false;
+                                for (const file of filesToRestore) {
+                                        const source = path.join(cachePath, file);
+                                        if (!(await fs.pathExists(source))) continue;
+
+                                        const destination = path.join(
+                                                clientDir,
+                                                meta.extractPath,
+                                                file
+                                        );
+
+                                        try {
+                                                await fs.ensureDir(path.dirname(destination));
+                                                await fs.copy(source, destination, { overwrite: true });
+                                                movedAny = true;
+                                        } catch (error) {
+                                                Logger.log(
+                                                        `Failed to restore ${file} from cache for ${name}`,
+                                                        'error',
+                                                        error
+                                                );
+                                        }
+                                }
+
+                                if (!movedAny) return false;
+
+                                const uniqueFiles = Array.from(
+                                        new Set([...expectedFiles, ...filesToRestore])
+                                );
+                                expectedFiles.splice(0, expectedFiles.length, ...uniqueFiles);
+                                this.#fileCache[name] = expectedFiles;
+                                cacheModified = true;
+
+                                if (!(await hasAllFiles())) {
+                                        return false;
+                                }
+
+                                if (!this.#versionCache[name] && cachedVersion) {
+                                        this.#versionCache[name] = cachedVersion;
+                                        cacheModified = true;
+                                }
+
+                                return true;
+                        };
+
+                        if (await hasAllFiles()) {
+                                continue;
+                        }
+
+                        if (await restoreFromCache()) {
+                                continue;
+                        }
+
+                        Logger.log(
+                                `Missing ${name} files for ${realmKey}. Downloading to restore realm patches...`
+                        );
+                        const file = await fetchFile(`${name}.zip`);
+                        const extractedFiles = await extractArchive(
+                                name,
+                                file,
+                                path.join(clientDir, meta.extractPath)
+                        );
+
+                        this.#fileCache[name] = extractedFiles;
+
+                        const version = await fetchVersion(`${name}.version`);
+                        this.#versionCache[name] = version;
+
+                        if (shouldCache) {
+                                await this.#cachePatchFiles(
+                                        clientDir,
+                                        name,
+                                        version,
+                                        meta.extractPath,
+                                        extractedFiles
+                                );
+                        }
+
+                        cacheModified = true;
+                }
+
+                if (cacheModified) {
+                        await this.#saveCache(clientDir);
+                }
+        }
 }
 
 const Updater = new UpdaterClass();

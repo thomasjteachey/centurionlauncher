@@ -6,6 +6,7 @@ import fs from 'fs-extra';
 import Preferences from '~main/modules/preferences';
 import { isNotUndef } from '~common/utils';
 import Logger from '~main/modules/logger';
+import Updater from '~main/modules/updater';
 import { DEFAULT_REALMLIST, REALMS } from '~common/constants';
 
 export const patchConfig = async () => {
@@ -14,6 +15,8 @@ export const patchConfig = async () => {
 
         const realmKey = selectedRealm ?? 'legionnaire';
         const realmConfig = REALMS[realmKey];
+
+        await Updater.ensureRealmPatchesFor(realmKey);
 
         // Patch WoW.exe
         const exePath = path.join(clientDir, 'WoW.exe');
