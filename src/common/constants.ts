@@ -70,6 +70,7 @@ export const FileMap: Record<
         }
 > = {
         ['addons']: { extractPath: 'Interface/Addons' },
+        ['patch-enUS-6']: { extractPath: 'Data/enUS' },
         ['patch-enUS-7']: { extractPath: 'Data/enUS' },
         ['patch-enUS-8']: { extractPath: 'Data/enUS', realms: ['legionnaire_plus'] },
         ['patch-enUS-9']: { extractPath: 'Data/enUS', realms: ['barracks', 'barracks_plus'] },
