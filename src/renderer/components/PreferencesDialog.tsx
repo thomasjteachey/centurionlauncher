@@ -118,6 +118,8 @@ const PreferencesDialog = ({ close }: Props) => {
         const inputClassName =
                 'rounded border border-text bg-dark/60 p-2 text-sm text-text placeholder:text-textDark focus:border-primary focus:outline-none';
 
+        const realmListPresets = Object.entries(REALMLIST_PRESETS);
+
         return (
                 <div className="dialog">
                         <CloseButton close={close} />
