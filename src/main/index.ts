@@ -69,9 +69,11 @@ const createWindow = async () => {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
-	// Initialization
-	Preferences.data = await Preferences.load();
-	Updater.verify();
+        // Initialization
+        Preferences.data = await Preferences.load();
+        const launcherUpdateTriggered = await Updater.updateLauncher();
+        if (launcherUpdateTriggered) return;
+        Updater.verify();
 
 	// Set app user model id for windows
 	electronApp.setAppUserModelId('com.electron');
