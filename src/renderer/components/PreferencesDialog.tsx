@@ -4,8 +4,8 @@ import { useEffect, useState } from 'react';
 import { api } from '~renderer/utils/api';
 import {
         DEFAULT_LAUNCHER_UPDATE_URL,
-        DEFAULT_REALMLIST,
-        REALMLIST_PRESETS
+        REALMLIST_DEFAULTS,
+        REALMS
 } from '~common/constants';
 
 import TextButton from './styled/TextButton';
@@ -23,15 +23,24 @@ const PreferencesDialog = ({ close }: Props) => {
         const update = api.updater.update.useMutation();
 
         const [launcherUpdateUrl, setLauncherUpdateUrl] = useState('');
-        const [realmList, setRealmList] = useState('');
+        const [legionnaireRealmList, setLegionnaireRealmList] = useState('');
+        const [azerothcoreRealmList, setAzerothcoreRealmList] = useState('');
 
         useEffect(() => {
                 setLauncherUpdateUrl(pref?.launcherUpdateUrl ?? DEFAULT_LAUNCHER_UPDATE_URL);
         }, [pref?.launcherUpdateUrl]);
 
         useEffect(() => {
-                setRealmList(pref?.realmList ?? DEFAULT_REALMLIST);
-        }, [pref?.realmList]);
+                setLegionnaireRealmList(
+                        pref?.realmListLegionnaire ?? REALMLIST_DEFAULTS.legionnaire
+                );
+        }, [pref?.realmListLegionnaire]);
+
+        useEffect(() => {
+                setAzerothcoreRealmList(
+                        pref?.realmListAzerothcore ?? REALMLIST_DEFAULTS.azerothcore
+                );
+        }, [pref?.realmListAzerothcore]);
 
         const persistLauncherUpdateUrl = async () => {
                 const trimmed = launcherUpdateUrl.trim();
@@ -54,23 +63,54 @@ const PreferencesDialog = ({ close }: Props) => {
                 }
         };
 
-        const persistRealmList = async (value?: string) => {
-                const nextValue = (value ?? realmList).trim();
+        const persistLegionnaireRealmList = async () => {
                 if (!pref) return;
-                if (!nextValue) {
-                        setRealmList(pref.realmList);
+
+                const trimmed = legionnaireRealmList.trim();
+                if (!trimmed) {
+                        setLegionnaireRealmList(pref.realmListLegionnaire);
                         return;
                 }
 
-                if (nextValue === pref.realmList) return;
+                if (trimmed === pref.realmListLegionnaire) return;
+
+                const shouldUpdateActiveRealm =
+                        REALMS[pref.selectedRealm]?.realmListKey === 'legionnaire';
 
                 try {
                         const updated = await setPref.mutateAsync({
-                                realmList: nextValue
+                                realmListLegionnaire: trimmed,
+                                ...(shouldUpdateActiveRealm ? { realmList: trimmed } : {})
                         });
-                        setRealmList(updated.realmList);
+                        setLegionnaireRealmList(updated.realmListLegionnaire);
                 } catch (error) {
-                        setRealmList(pref.realmList);
+                        setLegionnaireRealmList(pref.realmListLegionnaire);
+                        console.error(error);
+                }
+        };
+
+        const persistAzerothcoreRealmList = async () => {
+                if (!pref) return;
+
+                const trimmed = azerothcoreRealmList.trim();
+                if (!trimmed) {
+                        setAzerothcoreRealmList(pref.realmListAzerothcore);
+                        return;
+                }
+
+                if (trimmed === pref.realmListAzerothcore) return;
+
+                const shouldUpdateActiveRealm =
+                        REALMS[pref.selectedRealm]?.realmListKey === 'azerothcore';
+
+                try {
+                        const updated = await setPref.mutateAsync({
+                                realmListAzerothcore: trimmed,
+                                ...(shouldUpdateActiveRealm ? { realmList: trimmed } : {})
+                        });
+                        setAzerothcoreRealmList(updated.realmListAzerothcore);
+                } catch (error) {
+                        setAzerothcoreRealmList(pref.realmListAzerothcore);
                         console.error(error);
                 }
         };
@@ -112,45 +152,17 @@ const PreferencesDialog = ({ close }: Props) => {
                                         label="Clean WDB on each launch"
                                 />
                                 <div className="mt-3 flex flex-col gap-2 pl-2">
-                                        <span className="text-sm text-text">Realmlist server</span>
-                                        <div className="flex flex-col gap-1">
-                                                {realmListPresets.map(([id, preset]) => {
-                                                        const checked = realmList === preset.host;
-                                                        return (
-                                                                <label
-                                                                        key={id}
-                                                                        className="flex items-center gap-2 text-sm text-text"
-                                                                >
-                                                                        <input
-                                                                                type="radio"
-                                                                                name="realm-list-preset"
-                                                                                value={preset.host}
-                                                                                checked={checked}
-                                                                                onChange={() => {
-                                                                                        setRealmList(preset.host);
-                                                                                        void persistRealmList(preset.host);
-                                                                                }}
-                                                                        />
-                                                                        <span className="flex flex-col leading-tight">
-                                                                                <span>{preset.label}</span>
-                                                                                <span className="text-xs text-textDark">
-                                                                                        {preset.host}
-                                                                                </span>
-                                                                        </span>
-                                                                </label>
-                                                        );
-                                                })}
-                                        </div>
-                                        <label htmlFor="realm-list-custom" className="text-sm text-text">
-                                                Custom realmlist
+                                        <span className="text-sm text-text">Realmlist servers</span>
+                                        <label htmlFor="realm-list-azerothcore" className="text-sm text-text">
+                                                AzerothCore realmlist
                                         </label>
                                         <input
-                                                id="realm-list-custom"
+                                                id="realm-list-azerothcore"
                                                 className={inputClassName}
-                                                value={realmList}
-                                                onChange={event => setRealmList(event.target.value)}
+                                                value={azerothcoreRealmList}
+                                                onChange={event => setAzerothcoreRealmList(event.target.value)}
                                                 onBlur={() => {
-                                                        void persistRealmList();
+                                                        void persistAzerothcoreRealmList();
                                                 }}
                                                 onKeyDown={event => {
                                                         if (event.key === 'Enter') {
@@ -158,7 +170,26 @@ const PreferencesDialog = ({ close }: Props) => {
                                                                 event.currentTarget.blur();
                                                         }
                                                 }}
-                                                placeholder={DEFAULT_REALMLIST}
+                                                placeholder={REALMLIST_DEFAULTS.azerothcore}
+                                        />
+                                        <label htmlFor="realm-list-legionnaire" className="text-sm text-text">
+                                                Legionnaire realmlist
+                                        </label>
+                                        <input
+                                                id="realm-list-legionnaire"
+                                                className={inputClassName}
+                                                value={legionnaireRealmList}
+                                                onChange={event => setLegionnaireRealmList(event.target.value)}
+                                                onBlur={() => {
+                                                        void persistLegionnaireRealmList();
+                                                }}
+                                                onKeyDown={event => {
+                                                        if (event.key === 'Enter') {
+                                                                event.preventDefault();
+                                                                event.currentTarget.blur();
+                                                        }
+                                                }}
+                                                placeholder={REALMLIST_DEFAULTS.legionnaire}
                                         />
                                 </div>
                         </div>

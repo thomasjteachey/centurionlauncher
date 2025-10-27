@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
         DEFAULT_LAUNCHER_UPDATE_URL,
         DEFAULT_REALMLIST,
+        REALMLIST_DEFAULTS,
         REALM_IDS
 } from './constants';
 
@@ -44,6 +45,16 @@ export const PreferencesSchema = z.object({
                 .min(1)
                 .transform(normalizeLauncherUrl)
                 .default(DEFAULT_LAUNCHER_UPDATE_URL),
+        realmListLegionnaire: z
+                .string()
+                .trim()
+                .min(1)
+                .default(REALMLIST_DEFAULTS.legionnaire),
+        realmListAzerothcore: z
+                .string()
+                .trim()
+                .min(1)
+                .default(REALMLIST_DEFAULTS.azerothcore),
         realmList: z.string().trim().min(1).default(DEFAULT_REALMLIST),
         windowPosition: z
                 .object({

@@ -1,7 +1,12 @@
 import cls from 'classnames';
 import { useState, type ReactNode } from 'react';
 
-import { REALMS, type RealmId } from '~common/constants';
+import {
+        REALMLIST_DEFAULTS,
+        REALMS,
+        type RealmId,
+        type RealmListKey
+} from '~common/constants';
 import type { PreferencesSchema } from '~common/schemas';
 import { api } from '~renderer/utils/api';
 
@@ -31,6 +36,19 @@ const LargeButton = ({
 	</button>
 );
 
+const getRealmListHost = (
+        pref: PreferencesSchema | undefined,
+        key: RealmListKey
+) => {
+        switch (key) {
+                case 'azerothcore':
+                        return pref?.realmListAzerothcore ?? REALMLIST_DEFAULTS.azerothcore;
+                case 'legionnaire':
+                default:
+                        return pref?.realmListLegionnaire ?? REALMLIST_DEFAULTS.legionnaire;
+        }
+};
+
 const RealmSwitch = () => {
         const { data: pref } = api.preferences.get.useQuery();
         const setPref = api.preferences.set.useMutation();
@@ -46,7 +64,9 @@ const RealmSwitch = () => {
         const onClick = async (realm: RealmId) => {
                 if (isLoading) return;
 
-                const targetRealmList = REALMS[realm]?.realmList;
+                const targetRealmList = REALMS[realm]
+                        ? getRealmListHost(pref, REALMS[realm].realmListKey)
+                        : undefined;
                 const alreadySelected = pref?.selectedRealm === realm;
                 const hasCorrectRealmList = pref?.realmList === targetRealmList;
 
@@ -65,7 +85,7 @@ const RealmSwitch = () => {
         return (
                 <>
                         <p className="text-2xl">Select server:</p>
-                        <div className="flex gap-2">
+                        <div className="flex flex-wrap gap-2">
                                 {Object.entries(REALMS).map(([id, meta]) => (
                                         <LargeButton
                                                 key={id}
