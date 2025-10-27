@@ -14,16 +14,21 @@ import { appRouter } from './api/root';
 export let mainWindow: BrowserWindow | null = null;
 
 const createWindow = async () => {
-	const { rememberPosition, windowPosition } = Preferences.data;
+        const { rememberPosition, windowPosition } = Preferences.data;
 
-	const position = rememberPosition
-		? windowPosition
-		: { width: 800, height: 600 };
+        const position = rememberPosition
+                ? windowPosition
+                : { width: 800, height: 600 };
 
-	// Create the browser window.
-	mainWindow = new BrowserWindow({
-		...position,
-		minWidth: 800,
+        void Logger.log('Creating main window', undefined, {
+                rememberPosition,
+                windowPosition: windowPosition ?? null
+        });
+
+        // Create the browser window.
+        mainWindow = new BrowserWindow({
+                ...position,
+                minWidth: 800,
 		minHeight: 600,
 		icon,
 		frame: false,
@@ -37,23 +42,55 @@ const createWindow = async () => {
 
 	createIPCHandler({ router: appRouter, windows: [mainWindow] });
 
-	mainWindow.on('ready-to-show', () => {
-		// Clean up all observers
-		Updater.clearObservers();
+        mainWindow.on('ready-to-show', () => {
+                // Clean up all observers
+                Updater.clearObservers();
 
-		mainWindow?.show();
-	});
+                mainWindow?.show();
+                void Logger.log('Main window ready to show');
+        });
 
-	mainWindow.webContents.setWindowOpenHandler(details => {
-		shell.openExternal(details.url);
-		return { action: 'deny' };
-	});
+        mainWindow.webContents.setWindowOpenHandler(details => {
+                shell.openExternal(details.url);
+                return { action: 'deny' };
+        });
 
-	mainWindow.on('close', async () => {
-		if (!mainWindow) return;
-		const [x = 0, y = 0] = mainWindow.getPosition();
-		const [width = 0, height = 0] = mainWindow.getSize();
-		Preferences.data = { windowPosition: { x, y, width, height } };
+        mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+                void Logger.log('Renderer failed to load', 'error', {
+                        errorCode,
+                        errorDescription,
+                        validatedURL,
+                        isMainFrame
+                });
+        });
+
+        mainWindow.webContents.on('render-process-gone', (_event, details) => {
+                void Logger.log('Renderer process gone', 'error', details);
+        });
+
+        mainWindow.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+                const type = level >= 2 ? 'error' : level === 1 ? 'warning' : undefined;
+                void Logger.log('Renderer console message', type, {
+                        level,
+                        message,
+                        line,
+                        sourceId
+                });
+        });
+
+        mainWindow.on('unresponsive', () => {
+                void Logger.log('Main window became unresponsive', 'warning');
+        });
+
+        mainWindow.on('responsive', () => {
+                void Logger.log('Main window responsive again');
+        });
+
+        mainWindow.on('close', async () => {
+                if (!mainWindow) return;
+                const [x = 0, y = 0] = mainWindow.getPosition();
+                const [width = 0, height = 0] = mainWindow.getSize();
+                Preferences.data = { windowPosition: { x, y, width, height } };
 	});
 
 	// HMR for renderer base on electron-vite cli.
@@ -62,32 +99,44 @@ const createWindow = async () => {
 		mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
 	} else {
 		mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
-	}
+        }
 };
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
-	// Initialization
-	Preferences.data = await Preferences.load();
-	Updater.verify();
+        void Logger.log('Electron app ready');
+        // Initialization
+        Preferences.data = await Preferences.load();
+        Updater.verify();
 
-	// Set app user model id for windows
+        // Set app user model id for windows
 	electronApp.setAppUserModelId('com.electron');
 
 	// Default open or close DevTools by F12 in development
 	// and ignore CommandOrControl + R in production.
 	// see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
 	app.on('browser-window-created', (_, window) => {
-		optimizer.watchWindowShortcuts(window);
-	});
+                optimizer.watchWindowShortcuts(window);
+        });
 
-	await createWindow();
+        await createWindow();
 });
 
 // Quit when all windows are closed
 app.on('window-all-closed', async () => {
-	await Logger.saveLog();
-	app.quit();
+        await Logger.saveLog();
+        app.quit();
+});
+
+process.on('uncaughtException', error => {
+        void Logger.log('Uncaught exception', 'error', error);
+});
+
+process.on('unhandledRejection', reason => {
+        void Logger.log('Unhandled promise rejection', 'error', {
+                reason: reason instanceof Error ? reason.message : reason,
+                stack: reason instanceof Error ? reason.stack : undefined
+        });
 });
