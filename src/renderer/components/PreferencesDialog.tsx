@@ -2,7 +2,11 @@ import { Download, FolderPen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { api } from '~renderer/utils/api';
-import { DEFAULT_LAUNCHER_UPDATE_URL, DEFAULT_REALMLIST } from '~common/constants';
+import {
+        DEFAULT_AZEROTHCORE_REALMLIST,
+        DEFAULT_LAUNCHER_UPDATE_URL,
+        DEFAULT_REALMLIST
+} from '~common/constants';
 
 import TextButton from './styled/TextButton';
 import CheckboxInput from './form/CheckboxInput';
@@ -20,6 +24,7 @@ const PreferencesDialog = ({ close }: Props) => {
 
         const [launcherUpdateUrl, setLauncherUpdateUrl] = useState('');
         const [realmList, setRealmList] = useState('');
+        const [azerothcoreRealmList, setAzerothcoreRealmList] = useState('');
 
         useEffect(() => {
                 setLauncherUpdateUrl(pref?.launcherUpdateUrl ?? DEFAULT_LAUNCHER_UPDATE_URL);
@@ -28,6 +33,12 @@ const PreferencesDialog = ({ close }: Props) => {
         useEffect(() => {
                 setRealmList(pref?.realmList ?? DEFAULT_REALMLIST);
         }, [pref?.realmList]);
+
+        useEffect(() => {
+                setAzerothcoreRealmList(
+                        pref?.azerothcoreRealmList ?? DEFAULT_AZEROTHCORE_REALMLIST
+                );
+        }, [pref?.azerothcoreRealmList]);
 
         const persistLauncherUpdateUrl = async () => {
                 const trimmed = launcherUpdateUrl.trim();
@@ -71,6 +82,27 @@ const PreferencesDialog = ({ close }: Props) => {
                 }
         };
 
+        const persistAzerothcoreRealmList = async () => {
+                const trimmed = azerothcoreRealmList.trim();
+                if (!pref) return;
+                if (!trimmed) {
+                        setAzerothcoreRealmList(pref.azerothcoreRealmList);
+                        return;
+                }
+
+                if (trimmed === pref.azerothcoreRealmList) return;
+
+                try {
+                        const updated = await setPref.mutateAsync({
+                                azerothcoreRealmList: trimmed
+                        });
+                        setAzerothcoreRealmList(updated.azerothcoreRealmList);
+                } catch (error) {
+                        setAzerothcoreRealmList(pref.azerothcoreRealmList);
+                        console.error(error);
+                }
+        };
+
         const inputClassName =
                 'rounded border border-text bg-dark/60 p-2 text-sm text-text placeholder:text-textDark focus:border-primary focus:outline-none';
 
@@ -107,7 +139,7 @@ const PreferencesDialog = ({ close }: Props) => {
                                 />
                                 <div className="mt-3 flex flex-col gap-1 pl-2">
                                         <label htmlFor="realm-list" className="text-sm text-text">
-                                                Realmlist server
+                                                Trinitycore realmlist server
                                         </label>
                                         <input
                                                 id="realm-list"
@@ -122,6 +154,28 @@ const PreferencesDialog = ({ close }: Props) => {
                                                         }
                                                 }}
                                                 placeholder={DEFAULT_REALMLIST}
+                                        />
+                                        <label
+                                                htmlFor="azerothcore-realm-list"
+                                                className="mt-2 text-sm text-text"
+                                        >
+                                                AzerothCore realmlist server
+                                        </label>
+                                        <input
+                                                id="azerothcore-realm-list"
+                                                className={inputClassName}
+                                                value={azerothcoreRealmList}
+                                                onChange={event =>
+                                                        setAzerothcoreRealmList(event.target.value)
+                                                }
+                                                onBlur={persistAzerothcoreRealmList}
+                                                onKeyDown={event => {
+                                                        if (event.key === 'Enter') {
+                                                                event.preventDefault();
+                                                                event.currentTarget.blur();
+                                                        }
+                                                }}
+                                                placeholder={DEFAULT_AZEROTHCORE_REALMLIST}
                                         />
                                 </div>
                         </div>

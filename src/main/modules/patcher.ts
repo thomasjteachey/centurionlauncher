@@ -7,10 +7,14 @@ import Preferences from '~main/modules/preferences';
 import { isNotUndef } from '~common/utils';
 import Logger from '~main/modules/logger';
 import Updater from '~main/modules/updater';
-import { DEFAULT_REALMLIST, REALMS } from '~common/constants';
+import {
+        DEFAULT_AZEROTHCORE_REALMLIST,
+        DEFAULT_REALMLIST,
+        REALMS
+} from '~common/constants';
 
 export const patchConfig = async () => {
-        const { clientDir, selectedRealm, realmList } = Preferences.data;
+        const { clientDir, selectedRealm, realmList, azerothcoreRealmList } = Preferences.data;
         if (!clientDir) return;
 
         const realmKey = selectedRealm ?? 'legionnaire';
@@ -239,7 +243,10 @@ export const patchConfig = async () => {
 	const primaryDisplay = screen.getPrimaryDisplay();
 	const { width, height } = primaryDisplay.bounds;
 
-        const realmHost = realmList ?? DEFAULT_REALMLIST;
+        const realmHost =
+                realmConfig.realmlistType === 'azerothcore'
+                        ? azerothcoreRealmList ?? DEFAULT_AZEROTHCORE_REALMLIST
+                        : realmList ?? DEFAULT_REALMLIST;
 
         const realmInfo = {
                 realmList: realmHost,
