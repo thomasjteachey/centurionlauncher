@@ -20,22 +20,46 @@ abstract class Preferences {
 		? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '.launcher')
 		: app.getPath('userData');
 
-	static async load() {
-		const userDataPath = path.join(this.userDataDir, 'settings.json');
-		try {
-			const json = await fs.readJSON(userDataPath);
-			return PreferencesSchema.parse({
-				...json,
-				isPortable: !!portableDir,
-				clientDir: portableDir ?? json.clientDir
-			});
-		} catch (e) {
-			return PreferencesSchema.parse({
-				isPortable: !!portableDir,
-				clientDir: portableDir
-			});
-		}
-	}
+        static async load() {
+                const userDataPath = path.join(this.userDataDir, 'settings.json');
+                try {
+                        const json = await fs.readJSON(userDataPath);
+                        const raw = json as Record<string, unknown> & {
+                                realmListLegionnaire?: unknown;
+                                realmListTrinitycore?: unknown;
+                                realmListAzerothcore?: unknown;
+                        };
+
+                        const sanitizeRealmList = (
+                                value: unknown
+                        ): string | undefined => {
+                                if (typeof value !== 'string') return undefined;
+                                const trimmed = value.trim();
+                                return trimmed.length > 0 ? trimmed : undefined;
+                        };
+
+                        const migrated = {
+                                ...raw,
+                                realmListTrinitycore:
+                                        sanitizeRealmList(raw.realmListTrinitycore) ??
+                                        sanitizeRealmList(raw.realmListLegionnaire),
+                                realmListAzerothcore: sanitizeRealmList(
+                                        raw.realmListAzerothcore
+                                )
+                        };
+                        delete (migrated as Record<string, unknown>).realmListLegionnaire;
+                        return PreferencesSchema.parse({
+                                ...migrated,
+                                isPortable: !!portableDir,
+                                clientDir: portableDir ?? raw.clientDir
+                        });
+                } catch (e) {
+                        return PreferencesSchema.parse({
+                                isPortable: !!portableDir,
+                                clientDir: portableDir
+                        });
+                }
+        }
 
 	static get data(): PreferencesSchema {
 		return this.#data;
