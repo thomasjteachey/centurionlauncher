@@ -1,34 +1,7 @@
-import cls from 'classnames';
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 
 import { REALMS, type RealmId } from '~common/constants';
 import { api } from '~renderer/utils/api';
-
-type LargeButtonProps = {
-	active?: boolean;
-	loading?: boolean;
-	onClick?: () => void;
-	children: ReactNode;
-};
-
-const LargeButton = ({
-	active,
-	loading,
-	onClick,
-	children
-}: LargeButtonProps) => (
-	<button
-		type="button"
-		onClick={onClick}
-		className={cls(
-			'rounded border bg-dark p-4 text-xl uppercase',
-			active ? 'color' : 'text-textDark',
-			loading && 'pointer-events-none opacity-50'
-		)}
-	>
-		{children}
-	</button>
-);
 
 const RealmSwitch = () => {
         const { data: pref } = api.preferences.get.useQuery();
@@ -42,7 +15,7 @@ const RealmSwitch = () => {
                         setIsLoading(data.state === 'verifying' || data.state === 'updating')
         });
 
-        const onClick = async (realm: RealmId) => {
+        const onSelect = async (realm: RealmId) => {
                 if (isLoading) return;
                 if (pref?.selectedRealm === realm) return;
                 await setPref.mutateAsync({ selectedRealm: realm });
@@ -52,17 +25,22 @@ const RealmSwitch = () => {
         return (
                 <>
                         <p className="text-2xl">Select server:</p>
-                        <div className="flex gap-2">
-                                {Object.entries(REALMS).map(([id, meta]) => (
-                                        <LargeButton
-                                                key={id}
-                                                active={pref?.selectedRealm === id}
-                                                loading={isLoading}
-                                                onClick={() => onClick(id as RealmId)}
-                                        >
-                                                {meta.label}
-                                        </LargeButton>
-                                ))}
+                        <div className="flex">
+                                <select
+                                        className="w-full rounded border border-dark bg-dark p-3 text-lg uppercase text-text"
+                                        value={pref?.selectedRealm ?? ''}
+                                        onChange={event => onSelect(event.target.value as RealmId)}
+                                        disabled={isLoading}
+                                >
+                                        <option value="" disabled hidden>
+                                                Select a realm
+                                        </option>
+                                        {Object.entries(REALMS).map(([id, meta]) => (
+                                                <option key={id} value={id}>
+                                                        {meta.label}
+                                                </option>
+                                        ))}
+                                </select>
                         </div>
                 </>
         );
