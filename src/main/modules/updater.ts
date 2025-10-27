@@ -1,10 +1,12 @@
 import path from 'node:path';
-import { exec } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import os from 'node:os';
 
 import fetch from 'node-fetch';
 import fs from 'fs-extra';
 import yauzl from 'yauzl-promise';
+
+import { app } from 'electron';
 
 import { mainWindow } from '~main/index';
 import { formatDuration, formatFileSize } from '~common/utils';
@@ -22,6 +24,9 @@ const resolveBaseUrl = () => {
 
 const resolvePatchUrl = (filePath: string) =>
         new URL(`patches/${filePath.replace(/^\/+/, '')}`, resolveBaseUrl()).toString();
+
+const resolveLauncherUrl = (filePath: string) =>
+        new URL(filePath.replace(/^\/+/, ''), resolveBaseUrl()).toString();
 
 // const isReadOnly = async (filePath: string) => {
 // 	try {
@@ -114,6 +119,40 @@ const fetchVersion = async (filePath: string) => {
                 throw Error(`Failed to download ${filePath}`);
         }
 };
+
+const compareVersions = (a: string, b: string) => {
+        const parse = (version: string) =>
+                version
+                        .split(/[^0-9]+/)
+                        .filter(Boolean)
+                        .map(part => Number.parseInt(part, 10));
+
+        const left = parse(a);
+        const right = parse(b);
+        const length = Math.max(left.length, right.length);
+
+        for (let i = 0; i < length; i += 1) {
+                const leftPart = left[i] ?? 0;
+                const rightPart = right[i] ?? 0;
+                if (leftPart > rightPart) return 1;
+                if (leftPart < rightPart) return -1;
+        }
+
+        return 0;
+};
+
+const parseLauncherManifest = (manifest: string) => {
+        const versionMatch = manifest.match(/^version:\s*([^\s]+)\s*$/m);
+        if (!versionMatch) return undefined;
+
+        const fileMatch = manifest.match(/^-\s+url:\s*(\S+)\s*$/m);
+        return {
+                version: versionMatch[1].trim(),
+                file: fileMatch?.[1]?.trim()
+        };
+};
+
+const escapeForBatch = (value: string) => value.replace(/\\/g, '\\\\');
 
 type ExtractProgressCallback = (progress: number | null, percent?: number) => void;
 
@@ -287,11 +326,138 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 	}
 
         async updateLauncher() {
-                Logger.log('Launcher updates are currently disabled.');
-                this.status = {
-                        state: 'failed',
-                        message: 'Launcher updates are currently disabled. Please download the latest release manually.'
-                };
+                if (os.platform() !== 'win32') return false;
+                if (!app.isPackaged) {
+                        Logger.log('Skipping launcher update in development environment.');
+                        return false;
+                }
+
+                let updatePath: string | undefined;
+                let scriptPath: string | undefined;
+                let downloadPath: string | undefined;
+
+                try {
+                        const manifestResponse = await fetch(
+                                resolveLauncherUrl('latest.yaml')
+                        );
+
+                        if (!manifestResponse.ok) {
+                                Logger.log('Failed to fetch launcher manifest. Skipping update.');
+                                return false;
+                        }
+
+                        const manifest = parseLauncherManifest(await manifestResponse.text());
+                        if (!manifest) {
+                                Logger.log('Launcher manifest is invalid. Skipping update.');
+                                return false;
+                        }
+
+                        const currentVersion = app.getVersion();
+                        if (compareVersions(manifest.version, currentVersion) <= 0) {
+                                Logger.log('Launcher is up to date.');
+                                return false;
+                        }
+
+                        const fileName = manifest.file ?? path.basename(process.execPath);
+                        Logger.log(
+                                `New launcher version available (${manifest.version}). Downloading ${fileName}...`
+                        );
+
+                        await fs.ensureDir(path.join(Preferences.userDataDir, 'downloads'));
+                        downloadPath = path.join(
+                                Preferences.userDataDir,
+                                'downloads',
+                                fileName
+                        );
+                        await fs.ensureDir(path.dirname(downloadPath));
+
+                        await resumableFetch(resolveLauncherUrl(fileName), downloadPath, undefined, {
+                                throttle: 500
+                        });
+
+                        const execDir = process.env.PORTABLE_EXECUTABLE_DIR
+                                ? process.env.PORTABLE_EXECUTABLE_DIR
+                                : path.dirname(process.execPath);
+                        const execName = path.basename(process.execPath);
+                        updatePath = path.join(execDir, `${execName}.update`);
+                        await fs.copy(downloadPath, updatePath, { overwrite: true });
+                        await fs.remove(downloadPath);
+                        downloadPath = undefined;
+
+                        const backupPath = path.join(execDir, `${execName}.old`);
+                        const escapedUpdatePath = escapeForBatch(updatePath);
+                        const escapedTargetPath = escapeForBatch(process.execPath);
+                        const escapedBackupPath = escapeForBatch(backupPath);
+                        scriptPath = path.join(execDir, 'update-launcher.bat');
+                        const processName = execName;
+                        const scriptContent = [
+                                '@echo off',
+                                'setlocal enableextensions',
+                                `set "SOURCE=${escapedUpdatePath}"`,
+                                `set "TARGET=${escapedTargetPath}"`,
+                                `set "BACKUP=${escapedBackupPath}"`,
+                                `set "PROCESS_NAME=${processName}"`,
+                                ':waitloop',
+                                'tasklist /FI "IMAGENAME eq %PROCESS_NAME%" | find /I "%PROCESS_NAME%" >NUL',
+                                'if %ERRORLEVEL%==0 (',
+                                '    timeout /t 1 >NUL',
+                                '    goto waitloop',
+                                ')',
+                                'if exist "%BACKUP%" del /f /q "%BACKUP%" >NUL 2>&1',
+                                'if exist "%TARGET%" move /Y "%TARGET%" "%BACKUP%" >NUL 2>&1',
+                                'move /Y "%SOURCE%" "%TARGET%" >NUL 2>&1',
+                                'start "" "%TARGET%"',
+                                'del "%~f0" >NUL 2>&1',
+                                'exit /b 0'
+                        ].join('\r\n');
+
+                        await fs.writeFile(scriptPath, scriptContent, 'utf8');
+
+                        spawn('cmd.exe', ['/c', 'start', '""', scriptPath], {
+                                detached: true,
+                                stdio: 'ignore'
+                        }).unref();
+
+                        Logger.log('Launcher update downloaded. Restarting to apply update.');
+                        app.quit();
+                        return true;
+                } catch (error) {
+                        Logger.log('Failed to update launcher', 'error', error);
+                        if (downloadPath) {
+                                try {
+                                        await fs.remove(downloadPath);
+                                } catch (cleanupError) {
+                                        Logger.log(
+                                                'Failed to clean up launcher download',
+                                                'error',
+                                                cleanupError
+                                        );
+                                }
+                        }
+                        if (updatePath) {
+                                try {
+                                        await fs.remove(updatePath);
+                                } catch (cleanupError) {
+                                        Logger.log(
+                                                'Failed to clean up launcher update file',
+                                                'error',
+                                                cleanupError
+                                        );
+                                }
+                        }
+                        if (scriptPath) {
+                                try {
+                                        await fs.remove(scriptPath);
+                                } catch (cleanupError) {
+                                        Logger.log(
+                                                'Failed to clean up launcher update script',
+                                                'error',
+                                                cleanupError
+                                        );
+                                }
+                        }
+                        return false;
+                }
         }
 
 	async verify() {
