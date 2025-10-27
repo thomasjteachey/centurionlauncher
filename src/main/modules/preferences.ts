@@ -20,22 +20,35 @@ abstract class Preferences {
 		? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '.launcher')
 		: app.getPath('userData');
 
-	static async load() {
-		const userDataPath = path.join(this.userDataDir, 'settings.json');
-		try {
-			const json = await fs.readJSON(userDataPath);
-			return PreferencesSchema.parse({
-				...json,
-				isPortable: !!portableDir,
-				clientDir: portableDir ?? json.clientDir
-			});
-		} catch (e) {
-			return PreferencesSchema.parse({
-				isPortable: !!portableDir,
-				clientDir: portableDir
-			});
-		}
-	}
+        static async load() {
+                const userDataPath = path.join(this.userDataDir, 'settings.json');
+                try {
+                        const json = await fs.readJSON(userDataPath);
+                        const raw = json as Record<string, unknown> & {
+                                realmListLegionnaire?: unknown;
+                                realmListTrinitycore?: unknown;
+                        };
+                        const migrated = {
+                                ...raw,
+                                realmListTrinitycore:
+                                        raw.realmListTrinitycore ??
+                                        (typeof raw.realmListLegionnaire === 'string'
+                                                ? raw.realmListLegionnaire
+                                                : undefined)
+                        };
+                        delete (migrated as Record<string, unknown>).realmListLegionnaire;
+                        return PreferencesSchema.parse({
+                                ...migrated,
+                                isPortable: !!portableDir,
+                                clientDir: portableDir ?? raw.clientDir
+                        });
+                } catch (e) {
+                        return PreferencesSchema.parse({
+                                isPortable: !!portableDir,
+                                clientDir: portableDir
+                        });
+                }
+        }
 
 	static get data(): PreferencesSchema {
 		return this.#data;

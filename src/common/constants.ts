@@ -1,10 +1,10 @@
 export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://136.56.187.218/downloads/';
 
 export const REALMLIST_DEFAULTS = {
-        legionnaire: '136.56.187.218',
+        trinitycore: '136.56.187.218',
         azerothcore: '138.197.110.226:3726'
 } as const;
-export const DEFAULT_REALMLIST = REALMLIST_DEFAULTS.legionnaire;
+export const DEFAULT_REALMLIST = REALMLIST_DEFAULTS.trinitycore;
 
 export type RealmListKey = keyof typeof REALMLIST_DEFAULTS;
 
@@ -50,25 +50,25 @@ export const REALMS: Record<RealmId, RealmConfig> = {
                 label: 'Legionnaire',
                 realmName: 'Legionnaire',
                 build: BUILD_12340,
-                realmListKey: 'legionnaire'
+                realmListKey: 'trinitycore'
         },
         legionnaire_plus: {
                 label: 'Legionnaire+',
                 realmName: 'Legionnaire Plus',
                 build: BUILD_12341,
-                realmListKey: 'legionnaire'
+                realmListKey: 'trinitycore'
         },
         barracks: {
                 label: 'Barracks',
                 realmName: 'Barracks',
                 build: BUILD_12342,
-                realmListKey: 'legionnaire'
+                realmListKey: 'trinitycore'
         },
         barracks_plus: {
                 label: 'Barracks+',
                 realmName: 'Barracks Plus',
                 build: BUILD_12342,
-                realmListKey: 'legionnaire'
+                realmListKey: 'trinitycore'
         },
         townsendboys: {
                 label: 'TOWNSENDBOYS',
@@ -80,7 +80,7 @@ export const REALMS: Record<RealmId, RealmConfig> = {
                 label: 'TRINITYWORLD',
                 realmName: 'TRINITYWORLD',
                 build: BUILD_12340,
-                realmListKey: 'legionnaire'
+                realmListKey: 'trinitycore'
         }
 };
 

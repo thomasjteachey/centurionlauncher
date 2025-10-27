@@ -43,9 +43,9 @@ const getRealmListHost = (
         switch (key) {
                 case 'azerothcore':
                         return pref?.realmListAzerothcore ?? REALMLIST_DEFAULTS.azerothcore;
-                case 'legionnaire':
+                case 'trinitycore':
                 default:
-                        return pref?.realmListLegionnaire ?? REALMLIST_DEFAULTS.legionnaire;
+                        return pref?.realmListTrinitycore ?? REALMLIST_DEFAULTS.trinitycore;
         }
 };
 

@@ -45,11 +45,11 @@ export const PreferencesSchema = z.object({
                 .min(1)
                 .transform(normalizeLauncherUrl)
                 .default(DEFAULT_LAUNCHER_UPDATE_URL),
-        realmListLegionnaire: z
+        realmListTrinitycore: z
                 .string()
                 .trim()
                 .min(1)
-                .default(REALMLIST_DEFAULTS.legionnaire),
+                .default(REALMLIST_DEFAULTS.trinitycore),
         realmListAzerothcore: z
                 .string()
                 .trim()

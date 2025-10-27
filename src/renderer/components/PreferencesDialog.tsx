@@ -23,7 +23,7 @@ const PreferencesDialog = ({ close }: Props) => {
         const update = api.updater.update.useMutation();
 
         const [launcherUpdateUrl, setLauncherUpdateUrl] = useState('');
-        const [legionnaireRealmList, setLegionnaireRealmList] = useState('');
+        const [trinitycoreRealmList, setTrinitycoreRealmList] = useState('');
         const [azerothcoreRealmList, setAzerothcoreRealmList] = useState('');
 
         useEffect(() => {
@@ -31,10 +31,10 @@ const PreferencesDialog = ({ close }: Props) => {
         }, [pref?.launcherUpdateUrl]);
 
         useEffect(() => {
-                setLegionnaireRealmList(
-                        pref?.realmListLegionnaire ?? REALMLIST_DEFAULTS.legionnaire
+                setTrinitycoreRealmList(
+                        pref?.realmListTrinitycore ?? REALMLIST_DEFAULTS.trinitycore
                 );
-        }, [pref?.realmListLegionnaire]);
+        }, [pref?.realmListTrinitycore]);
 
         useEffect(() => {
                 setAzerothcoreRealmList(
@@ -63,28 +63,28 @@ const PreferencesDialog = ({ close }: Props) => {
                 }
         };
 
-        const persistLegionnaireRealmList = async () => {
+        const persistTrinitycoreRealmList = async () => {
                 if (!pref) return;
 
-                const trimmed = legionnaireRealmList.trim();
+                const trimmed = trinitycoreRealmList.trim();
                 if (!trimmed) {
-                        setLegionnaireRealmList(pref.realmListLegionnaire);
+                        setTrinitycoreRealmList(pref.realmListTrinitycore);
                         return;
                 }
 
-                if (trimmed === pref.realmListLegionnaire) return;
+                if (trimmed === pref.realmListTrinitycore) return;
 
                 const shouldUpdateActiveRealm =
-                        REALMS[pref.selectedRealm]?.realmListKey === 'legionnaire';
+                        REALMS[pref.selectedRealm]?.realmListKey === 'trinitycore';
 
                 try {
                         const updated = await setPref.mutateAsync({
-                                realmListLegionnaire: trimmed,
+                                realmListTrinitycore: trimmed,
                                 ...(shouldUpdateActiveRealm ? { realmList: trimmed } : {})
                         });
-                        setLegionnaireRealmList(updated.realmListLegionnaire);
+                        setTrinitycoreRealmList(updated.realmListTrinitycore);
                 } catch (error) {
-                        setLegionnaireRealmList(pref.realmListLegionnaire);
+                        setTrinitycoreRealmList(pref.realmListTrinitycore);
                         console.error(error);
                 }
         };
@@ -172,16 +172,16 @@ const PreferencesDialog = ({ close }: Props) => {
                                                 }}
                                                 placeholder={REALMLIST_DEFAULTS.azerothcore}
                                         />
-                                        <label htmlFor="realm-list-legionnaire" className="text-sm text-text">
-                                                Legionnaire realmlist
+                                        <label htmlFor="realm-list-trinitycore" className="text-sm text-text">
+                                                Trinitycore realmlist
                                         </label>
                                         <input
-                                                id="realm-list-legionnaire"
+                                                id="realm-list-trinitycore"
                                                 className={inputClassName}
-                                                value={legionnaireRealmList}
-                                                onChange={event => setLegionnaireRealmList(event.target.value)}
+                                                value={trinitycoreRealmList}
+                                                onChange={event => setTrinitycoreRealmList(event.target.value)}
                                                 onBlur={() => {
-                                                        void persistLegionnaireRealmList();
+                                                        void persistTrinitycoreRealmList();
                                                 }}
                                                 onKeyDown={event => {
                                                         if (event.key === 'Enter') {
@@ -189,7 +189,7 @@ const PreferencesDialog = ({ close }: Props) => {
                                                                 event.currentTarget.blur();
                                                         }
                                                 }}
-                                                placeholder={REALMLIST_DEFAULTS.legionnaire}
+                                                placeholder={REALMLIST_DEFAULTS.trinitycore}
                                         />
                                 </div>
                         </div>
