@@ -13,6 +13,7 @@ import {
 } from '~common/constants';
 import { PreferencesSchema } from '~common/schemas';
 import { omit } from '~common/utils';
+import Logger from './logger';
 
 const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
 
@@ -28,6 +29,7 @@ abstract class Preferences {
 
         static async load() {
                 const userDataPath = path.join(this.userDataDir, 'settings.json');
+                void Logger.log('Loading preferences from disk', undefined, { userDataPath });
                 try {
                         const json = await fs.readJSON(userDataPath);
                         const raw = json as Record<string, unknown> & {
@@ -37,6 +39,7 @@ abstract class Preferences {
                                 realmList?: unknown;
                                 selectedRealm?: unknown;
                                 launcherUpdateUrl?: unknown;
+                                optionalPatches?: unknown;
                         };
 
                         const sanitizeRealmList = (
@@ -58,6 +61,20 @@ abstract class Preferences {
                                 return trimmed.length > 0 ? trimmed : undefined;
                         };
 
+                        const sanitizeOptionalPatches = (value: unknown): string[] | undefined => {
+                                if (Array.isArray(value)) {
+                                        return value.filter((entry): entry is string => typeof entry === 'string');
+                                }
+
+                                if (value && typeof value === 'object') {
+                                        return Object.entries(value as Record<string, unknown>)
+                                                .filter(([, enabled]) => enabled === true)
+                                                .map(([patch]) => patch);
+                                }
+
+                                return undefined;
+                        };
+
                         const selectedRealm = sanitizeRealmId(raw.selectedRealm) ?? 'legionnaire';
 
                         const realmListTrinitycore =
@@ -77,6 +94,8 @@ abstract class Preferences {
                                         ? realmListAzerothcore
                                         : realmListTrinitycore);
 
+                        const optionalPatches = sanitizeOptionalPatches(raw.optionalPatches) ?? [];
+
                         const migrated = {
                                 ...raw,
                                 launcherUpdateUrl:
@@ -85,37 +104,70 @@ abstract class Preferences {
                                 realmListTrinitycore,
                                 realmListAzerothcore,
                                 realmList,
-                                selectedRealm
+                                selectedRealm,
+                                optionalPatches
                         };
                         delete (migrated as Record<string, unknown>).realmListLegionnaire;
-                        return PreferencesSchema.parse({
+                        const parsed = PreferencesSchema.parse({
                                 ...migrated,
                                 isPortable: !!portableDir,
                                 clientDir: portableDir ?? raw.clientDir
                         });
+                        void Logger.log('Preferences loaded', undefined, {
+                                selectedRealm: parsed.selectedRealm,
+                                realmList: parsed.realmList,
+                                realmListTrinitycore: parsed.realmListTrinitycore,
+                                realmListAzerothcore: parsed.realmListAzerothcore,
+                                optionalPatches: parsed.optionalPatches,
+                                launcherUpdateUrl: parsed.launcherUpdateUrl
+                        });
+                        return parsed;
                 } catch (e) {
-                        return PreferencesSchema.parse({
+                        void Logger.log('Failed to load preferences, falling back to defaults', 'error', e);
+                        const fallback = PreferencesSchema.parse({
                                 isPortable: !!portableDir,
                                 clientDir: portableDir
                         });
+                        void Logger.log('Using default preferences', undefined, {
+                                selectedRealm: fallback.selectedRealm,
+                                realmList: fallback.realmList,
+                                realmListTrinitycore: fallback.realmListTrinitycore,
+                                realmListAzerothcore: fallback.realmListAzerothcore,
+                                optionalPatches: fallback.optionalPatches,
+                                launcherUpdateUrl: fallback.launcherUpdateUrl
+                        });
+                        return fallback;
                 }
         }
 
-	static get data(): PreferencesSchema {
-		return this.#data;
-	}
+        static get data(): PreferencesSchema {
+                return this.#data;
+        }
 
-	static set data(newData: Partial<Omit<PreferencesSchema, 'portableDir'>>) {
+        static set data(newData: Partial<Omit<PreferencesSchema, 'portableDir'>>) {
+                void Logger.log('Applying preference update', undefined, newData);
                 this.#data = PreferencesSchema.parse({ ...this.#data, ...newData });
-                void fs.writeJSON(
+                void Logger.log('Updated preference snapshot', undefined, {
+                        selectedRealm: this.#data.selectedRealm,
+                        realmList: this.#data.realmList,
+                        realmListTrinitycore: this.#data.realmListTrinitycore,
+                        realmListAzerothcore: this.#data.realmListAzerothcore,
+                        optionalPatches: this.#data.optionalPatches,
+                        launcherUpdateUrl: this.#data.launcherUpdateUrl
+                });
+                void fs
+                        .writeJSON(
                         path.join(this.userDataDir, 'settings.json'),
                         omit(
                                 this.#data,
-				portableDir ? ['isPortable', 'clientDir'] : ['isPortable']
-			),
-			{ spaces: 2 }
-		);
-	}
+                                portableDir ? ['isPortable', 'clientDir'] : ['isPortable']
+                        ),
+                                { spaces: 2 }
+                        )
+                        .catch(error => {
+                                void Logger.log('Failed to persist preferences to disk', 'error', error);
+                        });
+        }
 
 	static async isValidClientDir(clientDir?: string) {
 		return !!clientDir && (await fs.exists(path.join(clientDir, 'WoW.exe')));
