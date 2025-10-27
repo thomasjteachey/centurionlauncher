@@ -4,6 +4,9 @@ export const REALMLIST_DEFAULTS = {
         trinitycore: '136.56.187.218',
         azerothcore: '138.197.110.226:3726'
 } as const;
+// Temporary compatibility alias for legacy renderer bundles still referencing the
+// old constant name. Remove once downstream caches are fully rebuilt.
+export const REALMLIST_PRESETS = REALMLIST_DEFAULTS;
 export const DEFAULT_REALMLIST = REALMLIST_DEFAULTS.trinitycore;
 
 export type RealmListKey = keyof typeof REALMLIST_DEFAULTS;
