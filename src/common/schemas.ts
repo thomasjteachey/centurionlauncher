@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import {
+        DEFAULT_AZEROTHCORE_REALMLIST,
         DEFAULT_LAUNCHER_UPDATE_URL,
         DEFAULT_REALMLIST,
         REALM_IDS
@@ -45,6 +46,11 @@ export const PreferencesSchema = z.object({
                 .transform(normalizeLauncherUrl)
                 .default(DEFAULT_LAUNCHER_UPDATE_URL),
         realmList: z.string().trim().min(1).default(DEFAULT_REALMLIST),
+        azerothcoreRealmList: z
+                .string()
+                .trim()
+                .min(1)
+                .default(DEFAULT_AZEROTHCORE_REALMLIST),
         windowPosition: z
                 .object({
                         x: z.number(),

@@ -1,12 +1,14 @@
 export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://136.56.187.218/downloads/';
 export const DEFAULT_REALMLIST = '136.56.187.218';
+export const DEFAULT_AZEROTHCORE_REALMLIST = '136.56.187.218:3726';
 
 export const REALM_IDS = [
         'legionnaire',
         'legionnaire_plus',
         'barracks',
         'barracks_plus',
-        'trinityworld'
+        'trinityworld',
+        'townsendboys'
 ] as const;
 export type RealmId = (typeof REALM_IDS)[number];
 
@@ -36,32 +38,44 @@ export const REALMS: Record<
                 label: string;
                 realmName: string;
                 build: BuildInfo;
+                realmlistType: 'trinitycore' | 'azerothcore';
         }
 > = {
         legionnaire: {
                 label: 'Legionnaire',
                 realmName: 'Legionnaire',
-                build: BUILD_12340
+                build: BUILD_12340,
+                realmlistType: 'trinitycore'
         },
         legionnaire_plus: {
                 label: 'Legionnaire+',
                 realmName: 'Legionnaire Plus',
-                build: BUILD_12341
+                build: BUILD_12341,
+                realmlistType: 'trinitycore'
         },
         barracks: {
                 label: 'Barracks',
                 realmName: 'Barracks',
-                build: BUILD_12342
+                build: BUILD_12342,
+                realmlistType: 'trinitycore'
         },
         barracks_plus: {
                 label: 'Barracks+',
                 realmName: 'Barracks Plus',
-                build: BUILD_12342
+                build: BUILD_12342,
+                realmlistType: 'trinitycore'
         },
         trinityworld: {
                 label: 'TRINITYWORLD',
                 realmName: 'TRINITYWORLD',
-                build: BUILD_12340
+                build: BUILD_12340,
+                realmlistType: 'trinitycore'
+        },
+        townsendboys: {
+                label: 'TOWNSENDBOYS',
+                realmName: 'TOWNSENDBOYS',
+                build: BUILD_12340,
+                realmlistType: 'azerothcore'
         }
 };
 
@@ -76,6 +90,7 @@ export const FileMap: Record<
         }
 > = {
         ['addons']: { extractPath: 'Interface/Addons' },
+        ['patch-enUS-4']: { extractPath: 'Data/enUS', realms: ['townsendboys'] },
         ['patch-enUS-6']: {
                 extractPath: 'Data/enUS',
                 realms: ['legionnaire', 'legionnaire_plus', 'barracks', 'barracks_plus']

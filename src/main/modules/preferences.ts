@@ -4,7 +4,11 @@ import fs from 'fs-extra';
 import { type z } from 'zod';
 import { app } from 'electron';
 
-import { DEFAULT_LAUNCHER_UPDATE_URL, DEFAULT_REALMLIST } from '~common/constants';
+import {
+        DEFAULT_AZEROTHCORE_REALMLIST,
+        DEFAULT_LAUNCHER_UPDATE_URL,
+        DEFAULT_REALMLIST
+} from '~common/constants';
 import { PreferencesSchema } from '~common/schemas';
 import { omit } from '~common/utils';
 
@@ -13,7 +17,8 @@ const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
 abstract class Preferences {
         static #data: z.infer<typeof PreferencesSchema> = PreferencesSchema.parse({
                 launcherUpdateUrl: DEFAULT_LAUNCHER_UPDATE_URL,
-                realmList: DEFAULT_REALMLIST
+                realmList: DEFAULT_REALMLIST,
+                azerothcoreRealmList: DEFAULT_AZEROTHCORE_REALMLIST
         });
 
 	static readonly userDataDir = process.env.PORTABLE_EXECUTABLE_DIR
