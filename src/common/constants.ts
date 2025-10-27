@@ -102,6 +102,7 @@ export const FileMap: Record<
         ['patch-enUS-8']: { extractPath: 'Data/enUS', realms: ['legionnaire_plus'] },
         ['patch-enUS-9']: { extractPath: 'Data/enUS', realms: ['barracks', 'barracks_plus'] },
         ['patch-enUS-10']: { extractPath: 'Data/enUS', realms: ['barracks_plus'] },
+        ['patch-dungeon-maps']: { extractPath: 'Data', realms: ['barracks', 'townsendboys'] },
         ['hd-creatures']: {
                 extractPath: 'Data',
                 optional: true,
