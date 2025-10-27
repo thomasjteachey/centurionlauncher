@@ -1,11 +1,19 @@
 export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://136.56.187.218/downloads/';
-export const DEFAULT_REALMLIST = '136.56.187.218';
+
+export const REALMLIST_DEFAULTS = {
+        legionnaire: '136.56.187.218',
+        azerothcore: '138.197.110.226:3726'
+} as const;
+export const DEFAULT_REALMLIST = REALMLIST_DEFAULTS.legionnaire;
+
+export type RealmListKey = keyof typeof REALMLIST_DEFAULTS;
 
 export const REALM_IDS = [
         'legionnaire',
         'legionnaire_plus',
         'barracks',
         'barracks_plus',
+        'townsendboys',
         'trinityworld'
 ] as const;
 export type RealmId = (typeof REALM_IDS)[number];
@@ -30,38 +38,49 @@ const BUILD_12342: BuildInfo = {
         number: 12342
 };
 
-export const REALMS: Record<
-        RealmId,
-        {
-                label: string;
-                realmName: string;
-                build: BuildInfo;
-        }
-> = {
+type RealmConfig = {
+        label: string;
+        realmName: string;
+        build: BuildInfo;
+        realmListKey: RealmListKey;
+};
+
+export const REALMS: Record<RealmId, RealmConfig> = {
         legionnaire: {
                 label: 'Legionnaire',
                 realmName: 'Legionnaire',
-                build: BUILD_12340
+                build: BUILD_12340,
+                realmListKey: 'legionnaire'
         },
         legionnaire_plus: {
                 label: 'Legionnaire+',
                 realmName: 'Legionnaire Plus',
-                build: BUILD_12341
+                build: BUILD_12341,
+                realmListKey: 'legionnaire'
         },
         barracks: {
                 label: 'Barracks',
                 realmName: 'Barracks',
-                build: BUILD_12342
+                build: BUILD_12342,
+                realmListKey: 'legionnaire'
         },
         barracks_plus: {
                 label: 'Barracks+',
                 realmName: 'Barracks Plus',
-                build: BUILD_12342
+                build: BUILD_12342,
+                realmListKey: 'legionnaire'
+        },
+        townsendboys: {
+                label: 'TOWNSENDBOYS',
+                realmName: 'TOWNSENDBOYS',
+                build: BUILD_12340,
+                realmListKey: 'azerothcore'
         },
         trinityworld: {
                 label: 'TRINITYWORLD',
                 realmName: 'TRINITYWORLD',
-                build: BUILD_12340
+                build: BUILD_12340,
+                realmListKey: 'legionnaire'
         }
 };
 
@@ -76,6 +95,10 @@ export const FileMap: Record<
         }
 > = {
         ['addons']: { extractPath: 'Interface/Addons' },
+        ['patch-enUS-4']: {
+                extractPath: 'Data/enUS',
+                realms: ['townsendboys']
+        },
         ['patch-enUS-6']: {
                 extractPath: 'Data/enUS',
                 realms: ['legionnaire', 'legionnaire_plus', 'barracks', 'barracks_plus']
