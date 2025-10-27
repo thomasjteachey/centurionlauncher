@@ -2,6 +2,7 @@ import cls from 'classnames';
 import { useState, type ReactNode } from 'react';
 
 import { REALMS, type RealmId } from '~common/constants';
+import type { PreferencesSchema } from '~common/schemas';
 import { api } from '~renderer/utils/api';
 
 type LargeButtonProps = {
@@ -44,8 +45,20 @@ const RealmSwitch = () => {
 
         const onClick = async (realm: RealmId) => {
                 if (isLoading) return;
-                if (pref?.selectedRealm === realm) return;
-                await setPref.mutateAsync({ selectedRealm: realm });
+
+                const targetRealmList = REALMS[realm]?.realmList;
+                const alreadySelected = pref?.selectedRealm === realm;
+                const hasCorrectRealmList = pref?.realmList === targetRealmList;
+
+                if (alreadySelected && hasCorrectRealmList) return;
+
+                const payload: Partial<PreferencesSchema> = { selectedRealm: realm };
+
+                if (!hasCorrectRealmList && targetRealmList) {
+                        payload.realmList = targetRealmList;
+                }
+
+                await setPref.mutateAsync(payload);
                 await invalidate.mutateAsync();
         };
 
