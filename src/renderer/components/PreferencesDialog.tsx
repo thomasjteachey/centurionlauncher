@@ -2,7 +2,11 @@ import { Download, FolderPen } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { api } from '~renderer/utils/api';
-import { DEFAULT_LAUNCHER_UPDATE_URL, DEFAULT_REALMLIST } from '~common/constants';
+import {
+        DEFAULT_LAUNCHER_UPDATE_URL,
+        DEFAULT_REALMLIST,
+        REALMLIST_PRESETS
+} from '~common/constants';
 
 import TextButton from './styled/TextButton';
 import CheckboxInput from './form/CheckboxInput';
@@ -50,19 +54,19 @@ const PreferencesDialog = ({ close }: Props) => {
                 }
         };
 
-        const persistRealmList = async () => {
-                const trimmed = realmList.trim();
+        const persistRealmList = async (value?: string) => {
+                const nextValue = (value ?? realmList).trim();
                 if (!pref) return;
-                if (!trimmed) {
+                if (!nextValue) {
                         setRealmList(pref.realmList);
                         return;
                 }
 
-                if (trimmed === pref.realmList) return;
+                if (nextValue === pref.realmList) return;
 
                 try {
                         const updated = await setPref.mutateAsync({
-                                realmList: trimmed
+                                realmList: nextValue
                         });
                         setRealmList(updated.realmList);
                 } catch (error) {
@@ -73,6 +77,8 @@ const PreferencesDialog = ({ close }: Props) => {
 
         const inputClassName =
                 'rounded border border-text bg-dark/60 p-2 text-sm text-text placeholder:text-textDark focus:border-primary focus:outline-none';
+
+        const realmListPresets = Object.entries(REALMLIST_PRESETS);
 
         return (
                 <div className="dialog">
@@ -105,16 +111,47 @@ const PreferencesDialog = ({ close }: Props) => {
                                         setValue={v => setPref.mutateAsync({ cleanWdb: v })}
                                         label="Clean WDB on each launch"
                                 />
-                                <div className="mt-3 flex flex-col gap-1 pl-2">
-                                        <label htmlFor="realm-list" className="text-sm text-text">
-                                                Realmlist server
+                                <div className="mt-3 flex flex-col gap-2 pl-2">
+                                        <span className="text-sm text-text">Realmlist server</span>
+                                        <div className="flex flex-col gap-1">
+                                                {realmListPresets.map(([id, preset]) => {
+                                                        const checked = realmList === preset.host;
+                                                        return (
+                                                                <label
+                                                                        key={id}
+                                                                        className="flex items-center gap-2 text-sm text-text"
+                                                                >
+                                                                        <input
+                                                                                type="radio"
+                                                                                name="realm-list-preset"
+                                                                                value={preset.host}
+                                                                                checked={checked}
+                                                                                onChange={() => {
+                                                                                        setRealmList(preset.host);
+                                                                                        void persistRealmList(preset.host);
+                                                                                }}
+                                                                        />
+                                                                        <span className="flex flex-col leading-tight">
+                                                                                <span>{preset.label}</span>
+                                                                                <span className="text-xs text-textDark">
+                                                                                        {preset.host}
+                                                                                </span>
+                                                                        </span>
+                                                                </label>
+                                                        );
+                                                })}
+                                        </div>
+                                        <label htmlFor="realm-list-custom" className="text-sm text-text">
+                                                Custom realmlist
                                         </label>
                                         <input
-                                                id="realm-list"
+                                                id="realm-list-custom"
                                                 className={inputClassName}
                                                 value={realmList}
                                                 onChange={event => setRealmList(event.target.value)}
-                                                onBlur={persistRealmList}
+                                                onBlur={() => {
+                                                        void persistRealmList();
+                                                }}
                                                 onKeyDown={event => {
                                                         if (event.key === 'Enter') {
                                                                 event.preventDefault();
