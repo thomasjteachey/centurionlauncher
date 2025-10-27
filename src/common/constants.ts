@@ -1,11 +1,25 @@
 export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://136.56.187.218/downloads/';
-export const DEFAULT_REALMLIST = '136.56.187.218';
+
+// Keep REALMLIST_PRESETS as the primary export so legacy renderer bundles that
+// were compiled against the old name still receive the mapping at runtime even
+// after tree-shaking.
+export const REALMLIST_PRESETS = {
+        trinitycore: '136.56.187.218',
+        azerothcore: '138.197.110.226:3726'
+} as const;
+// Newer code should use REALMLIST_DEFAULTS, but it intentionally references the
+// same object so both exports stay in sync.
+export const REALMLIST_DEFAULTS = REALMLIST_PRESETS;
+export const DEFAULT_REALMLIST = REALMLIST_DEFAULTS.trinitycore;
+
+export type RealmListKey = keyof typeof REALMLIST_DEFAULTS;
 
 export const REALM_IDS = [
         'legionnaire',
         'legionnaire_plus',
         'barracks',
         'barracks_plus',
+        'townsendboys',
         'trinityworld'
 ] as const;
 export type RealmId = (typeof REALM_IDS)[number];
@@ -30,38 +44,49 @@ const BUILD_12342: BuildInfo = {
         number: 12342
 };
 
-export const REALMS: Record<
-        RealmId,
-        {
-                label: string;
-                realmName: string;
-                build: BuildInfo;
-        }
-> = {
+type RealmConfig = {
+        label: string;
+        realmName: string;
+        build: BuildInfo;
+        realmListKey: RealmListKey;
+};
+
+export const REALMS: Record<RealmId, RealmConfig> = {
         legionnaire: {
                 label: 'Legionnaire',
                 realmName: 'Legionnaire',
-                build: BUILD_12340
+                build: BUILD_12340,
+                realmListKey: 'trinitycore'
         },
         legionnaire_plus: {
                 label: 'Legionnaire+',
                 realmName: 'Legionnaire Plus',
-                build: BUILD_12341
+                build: BUILD_12341,
+                realmListKey: 'trinitycore'
         },
         barracks: {
                 label: 'Barracks',
                 realmName: 'Barracks',
-                build: BUILD_12342
+                build: BUILD_12342,
+                realmListKey: 'trinitycore'
         },
         barracks_plus: {
                 label: 'Barracks+',
                 realmName: 'Barracks Plus',
-                build: BUILD_12342
+                build: BUILD_12342,
+                realmListKey: 'trinitycore'
+        },
+        townsendboys: {
+                label: 'TOWNSENDBOYS',
+                realmName: 'TOWNSENDBOYS',
+                build: BUILD_12340,
+                realmListKey: 'azerothcore'
         },
         trinityworld: {
                 label: 'TRINITYWORLD',
                 realmName: 'TRINITYWORLD',
-                build: BUILD_12340
+                build: BUILD_12340,
+                realmListKey: 'trinitycore'
         }
 };
 
@@ -76,6 +101,10 @@ export const FileMap: Record<
         }
 > = {
         ['addons']: { extractPath: 'Interface/Addons' },
+        ['patch-enUS-4']: {
+                extractPath: 'Data/enUS',
+                realms: ['townsendboys']
+        },
         ['patch-enUS-6']: {
                 extractPath: 'Data/enUS',
                 realms: ['legionnaire', 'legionnaire_plus', 'barracks', 'barracks_plus']
