@@ -27,14 +27,25 @@ abstract class Preferences {
                         const raw = json as Record<string, unknown> & {
                                 realmListLegionnaire?: unknown;
                                 realmListTrinitycore?: unknown;
+                                realmListAzerothcore?: unknown;
                         };
+
+                        const sanitizeRealmList = (
+                                value: unknown
+                        ): string | undefined => {
+                                if (typeof value !== 'string') return undefined;
+                                const trimmed = value.trim();
+                                return trimmed.length > 0 ? trimmed : undefined;
+                        };
+
                         const migrated = {
                                 ...raw,
                                 realmListTrinitycore:
-                                        raw.realmListTrinitycore ??
-                                        (typeof raw.realmListLegionnaire === 'string'
-                                                ? raw.realmListLegionnaire
-                                                : undefined)
+                                        sanitizeRealmList(raw.realmListTrinitycore) ??
+                                        sanitizeRealmList(raw.realmListLegionnaire),
+                                realmListAzerothcore: sanitizeRealmList(
+                                        raw.realmListAzerothcore
+                                )
                         };
                         delete (migrated as Record<string, unknown>).realmListLegionnaire;
                         return PreferencesSchema.parse({
