@@ -5,7 +5,8 @@ export const REALM_IDS = [
         'legionnaire',
         'legionnaire_plus',
         'barracks',
-        'barracks_plus'
+        'barracks_plus',
+        'trinityworld'
 ] as const;
 export type RealmId = (typeof REALM_IDS)[number];
 
@@ -56,6 +57,11 @@ export const REALMS: Record<
                 label: 'Barracks+',
                 realmName: 'Barracks Plus',
                 build: BUILD_12342
+        },
+        trinityworld: {
+                label: 'TRINITYWORLD',
+                realmName: 'TRINITYWORLD',
+                build: BUILD_12340
         }
 };
 
@@ -70,8 +76,14 @@ export const FileMap: Record<
         }
 > = {
         ['addons']: { extractPath: 'Interface/Addons' },
-        ['patch-enUS-6']: { extractPath: 'Data/enUS' },
-        ['patch-enUS-7']: { extractPath: 'Data/enUS' },
+        ['patch-enUS-6']: {
+                extractPath: 'Data/enUS',
+                realms: ['legionnaire', 'legionnaire_plus', 'barracks', 'barracks_plus']
+        },
+        ['patch-enUS-7']: {
+                extractPath: 'Data/enUS',
+                realms: ['legionnaire', 'legionnaire_plus', 'barracks', 'barracks_plus']
+        },
         ['patch-enUS-8']: { extractPath: 'Data/enUS', realms: ['legionnaire_plus'] },
         ['patch-enUS-9']: { extractPath: 'Data/enUS', realms: ['barracks', 'barracks_plus'] },
         ['patch-enUS-10']: { extractPath: 'Data/enUS', realms: ['barracks_plus'] },
