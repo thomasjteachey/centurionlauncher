@@ -14,9 +14,10 @@ const LaunchPanel = () => {
 		onData: data => setStatus(data)
 	});
 
-	const verify = api.updater.verify.useMutation();
-	const update = api.updater.update.useMutation();
+        const verify = api.updater.verify.useMutation();
+        const update = api.updater.update.useMutation();
         const start = api.launcher.start.useMutation();
+        const restartLauncher = api.updater.restartLauncher.useMutation();
 
 	const props: Record<
 		UpdaterStatus['state'],
@@ -78,12 +79,15 @@ const LaunchPanel = () => {
 				</div>
 			)
 		},
-		updating: { button: <Button disabled>Updating</Button> },
+                updating: { button: <Button disabled>Updating</Button> },
+                launcherUpdating: {
+                        button: <Button disabled>Updating launcher</Button>
+                },
                 upToDate: {
                         button: (
-				<Button primary onClick={() => start.mutateAsync()}>
-					Play
-				</Button>
+                                <Button primary onClick={() => start.mutateAsync()}>
+                                        Play
+                                </Button>
 			),
                         helperText: (
                                 <div className="space-y-1">
@@ -95,17 +99,32 @@ const LaunchPanel = () => {
                         button: <Button onClick={() => verify.mutateAsync()}>Retry</Button>,
                         helperText: (
                                 <div className="space-y-1">
-					<p>
-						<span className="text-secondary">Error: </span>
-						{status.message}
-					</p>
-					<p className="text-xs text-textDark">
-						Verify your game data by clicking Retry.
-					</p>
-				</div>
-			)
-		}
-	};
+                                        <p>
+                                                <span className="text-secondary">Error: </span>
+                                                {status.message}
+                                        </p>
+                                        <p className="text-xs text-textDark">
+                                                Verify your game data by clicking Retry.
+                                        </p>
+                                </div>
+                        )
+                },
+                launcherRestartPending: {
+                        button: (
+                                <Button primary onClick={() => restartLauncher.mutateAsync()}>
+                                        Restart now
+                                </Button>
+                        ),
+                        helperText: (
+                                <div className="space-y-1">
+                                        <p>Launcher update downloaded.</p>
+                                        <p className="text-xs text-textDark">
+                                                Please restart the launcher to finish updating.
+                                        </p>
+                                </div>
+                        )
+                }
+        };
 
         const helper = props[status.state].helperText;
 

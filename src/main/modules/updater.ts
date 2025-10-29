@@ -225,7 +225,9 @@ type UpdaterState =
         | 'updateAvailable'
         | 'updating'
         | 'upToDate'
-        | 'failed';
+        | 'failed'
+        | 'launcherUpdating'
+        | 'launcherRestartPending';
 
 export type UpdaterStatus = {
         state: UpdaterState;
@@ -239,6 +241,8 @@ class UpdaterClass extends Observable<UpdaterStatus> {
         #fileCache: Record<string, string[]> = {};
         #pendingInvalidations = new Set<string>();
         #statusNotice?: string;
+        #pendingLauncherUpdateScript?: string;
+        #launcherUpdateScheduled = false;
 
         #setNotice(message?: string) {
                 this.#statusNotice = message;
@@ -335,6 +339,8 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                 }
 
                 this.#setNotice(undefined);
+                this.#pendingLauncherUpdateScript = undefined;
+                this.#launcherUpdateScheduled = false;
                 let updatePath: string | undefined;
                 let scriptPath: string | undefined;
                 let downloadPath: string | undefined;
@@ -374,6 +380,12 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 `New launcher version available (${versionText}). Downloading ${LAUNCHER_ARCHIVE_FILE}...`
                         );
 
+                        this.status = {
+                                state: 'launcherUpdating',
+                                progress: -1,
+                                message: 'Preparing launcher update...'
+                        };
+
                         await fs.ensureDir(path.join(Preferences.userDataDir, 'downloads'));
                         downloadPath = path.join(
                                 Preferences.userDataDir,
@@ -385,11 +397,45 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                         await resumableFetch(
                                 resolveLauncherUrl(LAUNCHER_ARCHIVE_FILE),
                                 downloadPath,
-                                undefined,
+                                progress => {
+                                        const totalBytes = progress.total + progress.initialPartial;
+                                        const downloaded = progress.done + progress.initialPartial;
+                                        const progressRatio =
+                                                totalBytes === 0 ? -1 : Math.min(downloaded / totalBytes, 1);
+                                        const percent =
+                                                totalBytes === 0
+                                                        ? 0
+                                                        : Math.round(Math.min(progressRatio, 1) * 100);
+                                        const elapsedSeconds = Math.max(
+                                                (Date.now() - progress.startedAt) / 1000,
+                                                0.001
+                                        );
+                                        const rate = progress.done / elapsedSeconds;
+                                        const remainingBytes = Math.max(totalBytes - downloaded, 0);
+                                        const eta =
+                                                rate === 0
+                                                        ? undefined
+                                                        : formatDuration(remainingBytes / rate);
+
+                                        this.status = {
+                                                state: 'launcherUpdating',
+                                                progress: progressRatio,
+                                                message:
+                                                        eta && progressRatio !== -1
+                                                                ? `Downloading launcher update... ${percent}% (${eta} remaining)`
+                                                                : 'Downloading launcher update...'
+                                        };
+                                },
                                 {
                                         throttle: 500
                                 }
                         );
+
+                        this.status = {
+                                state: 'launcherUpdating',
+                                progress: -1,
+                                message: 'Preparing launcher update...'
+                        };
 
                         const execDir = process.env.PORTABLE_EXECUTABLE_DIR
                                 ? process.env.PORTABLE_EXECUTABLE_DIR
@@ -458,14 +504,14 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 await fs.remove(extractPath);
                                 extractPath = undefined;
                         }
-
-                        spawn('cmd.exe', ['/c', 'start', '""', scriptPath], {
-                                detached: true,
-                                stdio: 'ignore'
-                        }).unref();
-
-                        Logger.log('Launcher update downloaded. Restarting to apply update.');
-                        app.quit();
+                        this.#pendingLauncherUpdateScript = scriptPath;
+                        this.#setNotice('Launcher update ready. Please restart the launcher to apply it.');
+                        this.status = {
+                                state: 'launcherRestartPending',
+                                progress: 1,
+                                message: 'Launcher update downloaded. Please restart to apply.'
+                        };
+                        Logger.log('Launcher update downloaded. Awaiting restart to apply update.');
                         return true;
                 } catch (error) {
                         Logger.log('Failed to update launcher', 'error', error);
@@ -474,6 +520,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         ? error.message
                                         : 'Unknown self-update error occurred';
                         this.#setNotice(`Self-update failed: ${message}`);
+                        this.status = { state: 'needsValidation' };
                         if (downloadPath) {
                                 try {
                                         await fs.remove(downloadPath);
@@ -853,8 +900,8 @@ class UpdaterClass extends Observable<UpdaterStatus> {
         async update(force?: boolean) {
                 const { clientDir, optionalPatches, selectedRealm } = Preferences.data;
                 const realmKey = selectedRealm ?? 'legionnaire';
-		try {
-			if (
+                try {
+                        if (
 				this.status?.state === 'verifying' ||
 				this.status?.state === 'updating'
 			)
@@ -971,6 +1018,42 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			Logger.log(`Update failed: ${message}`, 'error', e);
                         this.status = { state: 'failed', message };
                 }
+        }
+
+        applyLauncherUpdate() {
+                if (!this.#pendingLauncherUpdateScript) return false;
+                if (this.#launcherUpdateScheduled) return true;
+
+                this.#launcherUpdateScheduled = true;
+                this.status = {
+                        state: 'launcherUpdating',
+                        progress: -1,
+                        message: 'Restarting to apply launcher update...'
+                };
+
+                spawn(this.#pendingLauncherUpdateScript, [], {
+                        detached: true,
+                        stdio: 'ignore',
+                        windowsHide: true,
+                        shell: true
+                }).unref();
+
+                app.quit();
+                return true;
+        }
+
+        handleLauncherBeforeQuit() {
+                if (!this.#pendingLauncherUpdateScript) return;
+                if (this.#launcherUpdateScheduled) return;
+
+                this.#launcherUpdateScheduled = true;
+
+                spawn(this.#pendingLauncherUpdateScript, [], {
+                        detached: true,
+                        stdio: 'ignore',
+                        windowsHide: true,
+                        shell: true
+                }).unref();
         }
 
         async ensureRealmPatchesFor(realmKey: RealmId) {
