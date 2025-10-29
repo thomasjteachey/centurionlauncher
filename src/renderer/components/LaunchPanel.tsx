@@ -107,14 +107,23 @@ const LaunchPanel = () => {
 		}
 	};
 
-	return (
-		<div className="flex gap-3">
-			<div className="flex flex-grow select-none flex-col justify-end gap-3">
-				{props[status.state].helperText ??
-					(status.message && <p className="-mb-2 text-xs">{status.message}</p>)}
-				<div className="loading-wrapper">
-					{status.progress !== undefined && (
-						<div
+        const helper = props[status.state].helperText;
+
+        return (
+                <div className="flex gap-3">
+                        <div className="flex flex-grow select-none flex-col justify-end gap-3">
+                                <div className="-mb-2 flex flex-col gap-1">
+                                        {helper ??
+                                                (status.message && (
+                                                        <p className="text-xs">{status.message}</p>
+                                                ))}
+                                        {status.notice && (
+                                                <p className="text-xs text-secondary">{status.notice}</p>
+                                        )}
+                                </div>
+                                <div className="loading-wrapper">
+                                        {status.progress !== undefined && (
+                                                <div
 							className={cls('loading', {
 								'loading-unknown': status.progress === -1
 							})}

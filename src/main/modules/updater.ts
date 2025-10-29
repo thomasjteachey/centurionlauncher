@@ -28,6 +28,9 @@ const resolvePatchUrl = (filePath: string) =>
 const resolveLauncherUrl = (filePath: string) =>
         new URL(filePath.replace(/^\/+/, ''), resolveBaseUrl()).toString();
 
+const LAUNCHER_VERSION_FILE = 'centurionlauncher.version';
+const LAUNCHER_ARCHIVE_FILE = 'centurionlauncher.zip';
+
 // const isReadOnly = async (filePath: string) => {
 // 	try {
 // 		const { mode } = await fs.stat(filePath);
@@ -141,17 +144,6 @@ const compareVersions = (a: string, b: string) => {
         return 0;
 };
 
-const parseLauncherManifest = (manifest: string) => {
-        const versionMatch = manifest.match(/^version:\s*([^\s]+)\s*$/m);
-        if (!versionMatch) return undefined;
-
-        const fileMatch = manifest.match(/^-\s+url:\s*(\S+)\s*$/m);
-        return {
-                version: versionMatch[1].trim(),
-                file: fileMatch?.[1]?.trim()
-        };
-};
-
 const escapeForBatch = (value: string) => value.replace(/\\/g, '\\\\');
 
 type ExtractProgressCallback = (progress: number | null, percent?: number) => void;
@@ -236,15 +228,21 @@ type UpdaterState =
         | 'failed';
 
 export type UpdaterStatus = {
-	state: UpdaterState;
-	progress?: number;
-	message?: string;
+        state: UpdaterState;
+        progress?: number;
+        message?: string;
+        notice?: string;
 };
 
 class UpdaterClass extends Observable<UpdaterStatus> {
         #versionCache: Record<string, string> = {};
         #fileCache: Record<string, string[]> = {};
         #pendingInvalidations = new Set<string>();
+        #statusNotice?: string;
+
+        #setNotice(message?: string) {
+                this.#statusNotice = message;
+        }
 
         #cachePatchFiles = async (
                 clientDir: string,
@@ -307,14 +305,18 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 		return this._value;
 	}
 
-	private set status(v: UpdaterStatus) {
-		this._value = v;
-		this._notifyObservers(v);
-		if (this.status.state === 'failed') {
-			mainWindow?.setProgressBar(1, { mode: 'error' });
-		} else if (this.status.progress === 1) {
-			mainWindow?.setProgressBar(0);
-		} else {
+        private set status(v: UpdaterStatus) {
+                const next: UpdaterStatus = {
+                        ...v,
+                        notice: v.notice ?? this.#statusNotice
+                };
+                this._value = next;
+                this._notifyObservers(next);
+                if (this.status.state === 'failed') {
+                        mainWindow?.setProgressBar(1, { mode: 'error' });
+                } else if (this.status.progress === 1) {
+                        mainWindow?.setProgressBar(0);
+                } else {
 			mainWindow?.setProgressBar(this.status.progress ?? 0, {
 				mode: this.status.progress === -1 ? 'indeterminate' : 'normal'
 			});
@@ -332,57 +334,96 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                         return false;
                 }
 
+                this.#setNotice(undefined);
                 let updatePath: string | undefined;
                 let scriptPath: string | undefined;
                 let downloadPath: string | undefined;
+                let extractPath: string | undefined;
 
                 try {
-                        const manifestResponse = await fetch(
-                                resolveLauncherUrl('latest.yaml')
+                        const versionResponse = await fetch(
+                                resolveLauncherUrl(LAUNCHER_VERSION_FILE)
                         );
 
-                        if (!manifestResponse.ok) {
-                                Logger.log('Failed to fetch launcher manifest. Skipping update.');
+                        if (!versionResponse.ok) {
+                                Logger.log('Failed to fetch launcher version file. Skipping update.');
+                                this.#setNotice(
+                                        `Self-update skipped: no launcher version file found at ${resolveLauncherUrl(
+                                                LAUNCHER_VERSION_FILE
+                                        )}`
+                                );
                                 return false;
                         }
 
-                        const manifest = parseLauncherManifest(await manifestResponse.text());
-                        if (!manifest) {
-                                Logger.log('Launcher manifest is invalid. Skipping update.');
+                        const versionText = (await versionResponse.text()).trim();
+                        if (!versionText) {
+                                Logger.log('Launcher version file is empty. Skipping update.');
+                                this.#setNotice(
+                                        'Self-update skipped: launcher version file does not contain a version.'
+                                );
                                 return false;
                         }
 
                         const currentVersion = app.getVersion();
-                        if (compareVersions(manifest.version, currentVersion) <= 0) {
+                        if (compareVersions(versionText, currentVersion) <= 0) {
                                 Logger.log('Launcher is up to date.');
                                 return false;
                         }
 
-                        const fileName = manifest.file ?? path.basename(process.execPath);
                         Logger.log(
-                                `New launcher version available (${manifest.version}). Downloading ${fileName}...`
+                                `New launcher version available (${versionText}). Downloading ${LAUNCHER_ARCHIVE_FILE}...`
                         );
 
                         await fs.ensureDir(path.join(Preferences.userDataDir, 'downloads'));
                         downloadPath = path.join(
                                 Preferences.userDataDir,
                                 'downloads',
-                                fileName
+                                LAUNCHER_ARCHIVE_FILE
                         );
                         await fs.ensureDir(path.dirname(downloadPath));
 
-                        await resumableFetch(resolveLauncherUrl(fileName), downloadPath, undefined, {
-                                throttle: 500
-                        });
+                        await resumableFetch(
+                                resolveLauncherUrl(LAUNCHER_ARCHIVE_FILE),
+                                downloadPath,
+                                undefined,
+                                {
+                                        throttle: 500
+                                }
+                        );
 
                         const execDir = process.env.PORTABLE_EXECUTABLE_DIR
                                 ? process.env.PORTABLE_EXECUTABLE_DIR
                                 : path.dirname(process.execPath);
                         const execName = path.basename(process.execPath);
-                        updatePath = path.join(execDir, `${execName}.update`);
-                        await fs.copy(downloadPath, updatePath, { overwrite: true });
-                        await fs.remove(downloadPath);
+                        extractPath = path.join(
+                                Preferences.userDataDir,
+                                'downloads',
+                                `launcher-extract-${Date.now()}`
+                        );
+                        await fs.ensureDir(extractPath);
+
+                        const extractedFiles = await extractArchive(
+                                'launcher',
+                                downloadPath,
+                                extractPath
+                        );
                         downloadPath = undefined;
+
+                        const executableEntry = extractedFiles.find(
+                                entry => path.basename(entry) === execName
+                        );
+
+                        if (!executableEntry) {
+                                throw new Error(`Launcher archive did not contain ${execName}.`);
+                        }
+
+                        const extractedExecutablePath = path.join(
+                                extractPath,
+                                executableEntry
+                        );
+
+                        updatePath = path.join(execDir, `${execName}.update`);
+                        await fs.copy(extractedExecutablePath, updatePath, { overwrite: true });
 
                         const backupPath = path.join(execDir, `${execName}.old`);
                         const escapedUpdatePath = escapeForBatch(updatePath);
@@ -413,6 +454,11 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                         await fs.writeFile(scriptPath, scriptContent, 'utf8');
 
+                        if (extractPath) {
+                                await fs.remove(extractPath);
+                                extractPath = undefined;
+                        }
+
                         spawn('cmd.exe', ['/c', 'start', '""', scriptPath], {
                                 detached: true,
                                 stdio: 'ignore'
@@ -423,6 +469,11 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                         return true;
                 } catch (error) {
                         Logger.log('Failed to update launcher', 'error', error);
+                        const message =
+                                error instanceof Error
+                                        ? error.message
+                                        : 'Unknown self-update error occurred';
+                        this.#setNotice(`Self-update failed: ${message}`);
                         if (downloadPath) {
                                 try {
                                         await fs.remove(downloadPath);
@@ -451,6 +502,17 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 } catch (cleanupError) {
                                         Logger.log(
                                                 'Failed to clean up launcher update script',
+                                                'error',
+                                                cleanupError
+                                        );
+                                }
+                        }
+                        if (extractPath) {
+                                try {
+                                        await fs.remove(extractPath);
+                                } catch (cleanupError) {
+                                        Logger.log(
+                                                'Failed to clean up launcher extraction directory',
                                                 'error',
                                                 cleanupError
                                         );
