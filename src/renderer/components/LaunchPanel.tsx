@@ -22,20 +22,20 @@ const LaunchPanel = () => {
 		UpdaterStatus['state'],
 		{ button: ReactElement; helperText?: ReactElement }
 	> = {
-		needsValidation: {
-			button: <Button onClick={() => verify.mutateAsync()}>Verify</Button>,
-			helperText: (
-				<div className="-mb-2">
+                needsValidation: {
+                        button: <Button onClick={() => verify.mutateAsync()}>Verify</Button>,
+                        helperText: (
+                                <div className="space-y-1">
 					<p>New changes detected</p>
 					<p className="text-xs text-textDark">Please verify your game data</p>
 				</div>
 			)
 		},
 		verifying: { button: <Button disabled>Verifying</Button> },
-		serverUnreachable: {
-			button: <Button onClick={() => verify.mutateAsync()}>Retry</Button>,
-			helperText: (
-				<div className="-mb-2">
+                serverUnreachable: {
+                        button: <Button onClick={() => verify.mutateAsync()}>Retry</Button>,
+                        helperText: (
+                                <div className="space-y-1">
 					<p>
 						<span className="text-secondary">Error: </span> Failed to reach
 						update server
@@ -44,8 +44,8 @@ const LaunchPanel = () => {
 				</div>
 			)
 		},
-		noClient: {
-			button: (
+                noClient: {
+                        button: (
 				<DialogButton
 					clickAway
 					dialog={close => <ClientDirDialog close={close} />}
@@ -57,8 +57,8 @@ const LaunchPanel = () => {
 					)}
 				</DialogButton>
 			),
-			helperText: (
-				<div className="-mb-2">
+                        helperText: (
+                                <div className="space-y-1">
 					<p>Client location was not yet selected</p>
 					<p className="text-xs text-textDark">
 						Please select your World of Warcraft 3.3.5 location
@@ -66,10 +66,10 @@ const LaunchPanel = () => {
 				</div>
 			)
 		},
-		updateAvailable: {
-			button: <Button onClick={() => update.mutateAsync()}>Update</Button>,
-			helperText: (
-				<div className="-mb-2">
+                updateAvailable: {
+                        button: <Button onClick={() => update.mutateAsync()}>Update</Button>,
+                        helperText: (
+                                <div className="space-y-1">
 					<p>Update available!</p>
 					<p className="text-xs text-textDark">
 						With total download size{' '}
@@ -79,22 +79,22 @@ const LaunchPanel = () => {
 			)
 		},
 		updating: { button: <Button disabled>Updating</Button> },
-		upToDate: {
-			button: (
+                upToDate: {
+                        button: (
 				<Button primary onClick={() => start.mutateAsync()}>
 					Play
 				</Button>
 			),
-			helperText: (
-				<div className="-mb-2">
+                        helperText: (
+                                <div className="space-y-1">
 					<p>Everything up to date!</p>
 				</div>
 			)
 		},
-		failed: {
-			button: <Button onClick={() => verify.mutateAsync()}>Retry</Button>,
-			helperText: (
-				<div className="-mb-2">
+                failed: {
+                        button: <Button onClick={() => verify.mutateAsync()}>Retry</Button>,
+                        helperText: (
+                                <div className="space-y-1">
 					<p>
 						<span className="text-secondary">Error: </span>
 						{status.message}
@@ -111,8 +111,8 @@ const LaunchPanel = () => {
 
         return (
                 <div className="flex gap-3">
-                        <div className="flex flex-grow select-none flex-col justify-end gap-3">
-                                <div className="-mb-2 flex flex-col gap-1">
+                        <div className="flex flex-grow select-none flex-col justify-end gap-2">
+                                <div className="flex flex-col gap-1 pb-1">
                                         {helper ??
                                                 (status.message && (
                                                         <p className="text-xs">{status.message}</p>
