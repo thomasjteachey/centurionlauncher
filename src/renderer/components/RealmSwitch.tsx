@@ -12,7 +12,13 @@ const RealmSwitch = () => {
         const [isLoading, setIsLoading] = useState(false);
         api.updater.observe.useSubscription(undefined, {
                 onData: data =>
-                        setIsLoading(data.state === 'verifying' || data.state === 'updating')
+                        setIsLoading(
+                                data.state === 'verifying' ||
+                                        data.state === 'updating' ||
+                                        data.launcher?.state === 'downloading' ||
+                                        data.launcher?.state === 'pendingClose' ||
+                                        data.launcher?.state === 'applying'
+                        )
         });
 
         const onSelect = async (realm: RealmId) => {
