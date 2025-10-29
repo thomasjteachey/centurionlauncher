@@ -225,7 +225,9 @@ type UpdaterState =
         | 'updateAvailable'
         | 'updating'
         | 'upToDate'
-        | 'failed';
+        | 'failed'
+        | 'launcherUpdating'
+        | 'launcherRestartPending';
 
 type LauncherUpdateState = 'idle' | 'downloading' | 'pendingClose' | 'applying';
 
