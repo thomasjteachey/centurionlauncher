@@ -14,9 +14,10 @@ const LaunchPanel = () => {
 		onData: data => setStatus(data)
 	});
 
-	const verify = api.updater.verify.useMutation();
-	const update = api.updater.update.useMutation();
+        const verify = api.updater.verify.useMutation();
+        const update = api.updater.update.useMutation();
         const start = api.launcher.start.useMutation();
+        const closeLauncher = api.updater.closeLauncher.useMutation();
 
 	const props: Record<
 		UpdaterStatus['state'],
@@ -78,12 +79,12 @@ const LaunchPanel = () => {
 				</div>
 			)
 		},
-		updating: { button: <Button disabled>Updating</Button> },
+                updating: { button: <Button disabled>Updating</Button> },
                 upToDate: {
                         button: (
-				<Button primary onClick={() => start.mutateAsync()}>
-					Play
-				</Button>
+                                <Button primary onClick={() => start.mutateAsync()}>
+                                        Play
+                                </Button>
 			),
                         helperText: (
                                 <div className="space-y-1">
@@ -95,54 +96,105 @@ const LaunchPanel = () => {
                         button: <Button onClick={() => verify.mutateAsync()}>Retry</Button>,
                         helperText: (
                                 <div className="space-y-1">
-					<p>
-						<span className="text-secondary">Error: </span>
-						{status.message}
-					</p>
-					<p className="text-xs text-textDark">
-						Verify your game data by clicking Retry.
-					</p>
-				</div>
-			)
-		}
-	};
+                                        <p>
+                                                <span className="text-secondary">Error: </span>
+                                                {status.message}
+                                        </p>
+                                        <p className="text-xs text-textDark">
+                                                Verify your game data by clicking Retry.
+                                        </p>
+                                </div>
+                        )
+                }
+        };
 
-        const helper = props[status.state].helperText;
+        const base = props[status.state];
+        let helper = base.helperText;
+        let button = base.button;
+
+        const launcher = status.launcher;
+        if (launcher?.state === 'downloading') {
+                button = <Button disabled>Updating launcher</Button>;
+                helper = (
+                        <div className="space-y-1">
+                                <p>Launcher update in progress.</p>
+                                {launcher.message && (
+                                        <p className="text-xs text-textDark">{launcher.message}</p>
+                                )}
+                        </div>
+                );
+        } else if (launcher?.state === 'pendingClose') {
+                button = (
+                        <Button
+                                primary
+                                disabled={closeLauncher.isLoading}
+                                onClick={() => closeLauncher.mutateAsync()}
+                        >
+                                Close
+                        </Button>
+                );
+                helper = (
+                        <div className="space-y-1">
+                                <p>Launcher update downloaded.</p>
+                                <p className="text-xs text-textDark">
+                                        {launcher.message ?? 'Please close the launcher to finish updating.'}
+                                </p>
+                        </div>
+                );
+        } else if (launcher?.state === 'applying') {
+                button = <Button disabled>Closing...</Button>;
+                helper = (
+                        <div className="space-y-1">
+                                <p>Closing to apply launcher update...</p>
+                        </div>
+                );
+        }
+
+        const progressValue =
+                launcher?.state === 'downloading'
+                        ? launcher.progress
+                        : launcher?.state === 'pendingClose'
+                                ? 1
+                                : launcher?.state === 'applying'
+                                        ? -1
+                                        : status.progress;
+
+        const progressMessage = launcher?.message ?? status.message;
 
         return (
                 <div className="flex gap-3">
                         <div className="flex flex-grow select-none flex-col justify-end gap-2">
                                 <div className="flex flex-col gap-1 pb-1">
                                         {helper ??
-                                                (status.message && (
-                                                        <p className="text-xs">{status.message}</p>
+                                                (progressMessage && (
+                                                        <p className="text-xs">{progressMessage}</p>
                                                 ))}
                                         {status.notice && (
                                                 <p className="text-xs text-secondary">{status.notice}</p>
                                         )}
                                 </div>
                                 <div className="loading-wrapper">
-                                        {status.progress !== undefined && (
+                                        {progressValue !== undefined && (
                                                 <div
-							className={cls('loading', {
-								'loading-unknown': status.progress === -1
-							})}
-							style={
-								status.progress !== -1
-									? {
-											clipPath: `inset(0 ${
-												100 - Math.ceil(Math.abs(status.progress) * 100)
-											}% 0 0)`
-									  }
-									: undefined
-							}
-						/>
-					)}
-				</div>
-			</div>
-			{props[status.state].button}
-		</div>
-	);
+                                                        className={cls('loading', {
+                                                                'loading-unknown': progressValue === -1
+                                                        })}
+                                                        style={
+                                                                progressValue !== -1
+                                                                        ? {
+                                                                                        clipPath: `inset(0 ${
+                                                                                                100 - Math.ceil(Math.abs(progressValue) * 100)
+                                                                                        }% 0 0)`
+                                                                          }
+                                                                        : undefined
+                                                        }
+                                                />
+                                        )}
+                                </div>
+                        </div>
+                        {button}
+                </div>
+        );
 };
 
 export default LaunchPanel;

@@ -21,12 +21,13 @@ const createWindow = async () => {
 		: { width: 800, height: 600 };
 
 	// Create the browser window.
-	mainWindow = new BrowserWindow({
-		...position,
-		minWidth: 800,
-		minHeight: 600,
-		icon,
-		frame: false,
+        mainWindow = new BrowserWindow({
+                ...position,
+                minWidth: 800,
+                minHeight: 600,
+                backgroundColor: '#050505',
+                icon,
+                frame: false,
 		webPreferences: {
 			preload: join(__dirname, '../preload/index.js'),
 			contextIsolation: true,
@@ -71,25 +72,28 @@ const createWindow = async () => {
 app.whenReady().then(async () => {
         // Initialization
         Preferences.data = await Preferences.load();
-        const launcherUpdateTriggered = await Updater.updateLauncher();
-        if (launcherUpdateTriggered) return;
+        await createWindow();
+
+        await Updater.updateLauncher();
         Updater.verify();
 
-	// Set app user model id for windows
-	electronApp.setAppUserModelId('com.electron');
+        // Set app user model id for windows
+        electronApp.setAppUserModelId('com.electron');
 
 	// Default open or close DevTools by F12 in development
 	// and ignore CommandOrControl + R in production.
 	// see https://github.com/alex8088/electron-toolkit/tree/master/packages/utils
-	app.on('browser-window-created', (_, window) => {
-		optimizer.watchWindowShortcuts(window);
-	});
-
-	await createWindow();
+        app.on('browser-window-created', (_, window) => {
+                optimizer.watchWindowShortcuts(window);
+        });
 });
 
 // Quit when all windows are closed
 app.on('window-all-closed', async () => {
-	await Logger.saveLog();
-	app.quit();
+        await Logger.saveLog();
+        app.quit();
+});
+
+app.on('before-quit', () => {
+        Updater.handleLauncherBeforeQuit();
 });
