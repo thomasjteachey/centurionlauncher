@@ -52,13 +52,40 @@ const trpcClient = api.createClient({
 	]
 });
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-	<StrictMode>
-		<api.Provider client={trpcClient} queryClient={queryClient}>
-			<QueryClientProvider client={queryClient}>
-				<App />
-				<ReactQueryDevtools />
-			</QueryClientProvider>
-		</api.Provider>
-	</StrictMode>
-);
+const bootstrap = async () => {
+        const [preferencesResult, versionResult] = await Promise.allSettled([
+                trpcClient.query('preferences.get'),
+                trpcClient.query('general.version')
+        ]);
+
+        if (preferencesResult.status === 'fulfilled') {
+                queryClient.setQueryData(
+                        getQueryKey(api.preferences.get, undefined, 'query'),
+                        preferencesResult.value
+                );
+        } else {
+                console.error('Failed to preload preferences', preferencesResult.reason);
+        }
+
+        if (versionResult.status === 'fulfilled') {
+                queryClient.setQueryData(
+                        getQueryKey(api.general.version, undefined, 'query'),
+                        versionResult.value
+                );
+        } else {
+                console.error('Failed to preload version', versionResult.reason);
+        }
+
+        ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+                <StrictMode>
+                        <api.Provider client={trpcClient} queryClient={queryClient}>
+                                <QueryClientProvider client={queryClient}>
+                                        <App />
+                                        <ReactQueryDevtools />
+                                </QueryClientProvider>
+                        </api.Provider>
+                </StrictMode>
+        );
+};
+
+void bootstrap();
