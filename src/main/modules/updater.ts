@@ -2,7 +2,7 @@ import path from 'node:path';
 import { exec, spawn } from 'node:child_process';
 import os from 'node:os';
 
-import fetch from 'node-fetch';
+import fetch, { FetchError, type RequestInit } from 'node-fetch';
 import fs from 'fs-extra';
 import yauzl from 'yauzl-promise';
 
@@ -27,6 +27,52 @@ const resolvePatchUrl = (filePath: string) =>
 
 const resolveLauncherUrl = (filePath: string) =>
         new URL(filePath.replace(/^\/+/, ''), resolveBaseUrl()).toString();
+
+const REQUEST_TIMEOUT = 15_000;
+
+const fetchWithTimeout = async (url: string, options: RequestInit = {}) => {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
+        try {
+                const response = await fetch(url, {
+                        ...options,
+                        signal: controller.signal
+                });
+                return response;
+        } catch (error) {
+                if (error instanceof Error && error.name === 'AbortError') {
+                        const timeoutError = new Error('Request to update server timed out');
+                        timeoutError.name = 'AbortError';
+                        throw timeoutError;
+                }
+                throw error;
+        } finally {
+                clearTimeout(timeout);
+        }
+};
+
+const isNetworkError = (error: unknown) => {
+        if (error instanceof FetchError) {
+                return true;
+        }
+
+        if (error instanceof Error) {
+                if (error.name === 'AbortError') return true;
+
+                const code = (error as NodeJS.ErrnoException).code;
+                if (
+                        code === 'ENOTFOUND' ||
+                        code === 'ECONNRESET' ||
+                        code === 'ECONNREFUSED' ||
+                        code === 'EAI_AGAIN' ||
+                        code === 'ETIMEDOUT'
+                ) {
+                        return true;
+                }
+        }
+
+        return false;
+};
 
 // const isReadOnly = async (filePath: string) => {
 // 	try {
@@ -99,20 +145,26 @@ const fetchFile = async (
 };
 
 const fetchSize = async (filePath: string) => {
-	try {
-                const response = await fetch(resolvePatchUrl(filePath), {
+        try {
+                const response = await fetchWithTimeout(resolvePatchUrl(filePath), {
                         method: 'HEAD'
                 });
-		return parseInt(response.headers.get('content-length') ?? '0');
-	} catch (e) {
-		Logger.log(`Failed to download ${filePath}`, 'error', e);
-		throw Error(`Failed to download ${filePath}`);
-	}
+                if (!response.ok) {
+                        throw new Error(`Failed to fetch size for ${filePath}`);
+                }
+                return parseInt(response.headers.get('content-length') ?? '0');
+        } catch (e) {
+                Logger.log(`Failed to download ${filePath}`, 'error', e);
+                throw Error(`Failed to download ${filePath}`);
+        }
 };
 
 const fetchVersion = async (filePath: string) => {
         try {
-                const response = await fetch(resolvePatchUrl(filePath));
+                const response = await fetchWithTimeout(resolvePatchUrl(filePath));
+                if (!response.ok) {
+                        throw new Error(`Failed to fetch version for ${filePath}`);
+                }
                 return response.text();
         } catch (e) {
                 Logger.log(`Failed to download ${filePath}`, 'error', e);
@@ -337,7 +389,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                 let downloadPath: string | undefined;
 
                 try {
-                        const manifestResponse = await fetch(
+                        const manifestResponse = await fetchWithTimeout(
                                 resolveLauncherUrl('latest.yaml')
                         );
 
@@ -780,12 +832,25 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				toDownload !== 0
 					? { state: 'updateAvailable', message: formatFileSize(toDownload) }
 					: { state: 'upToDate', progress: 1 };
-		} catch (e) {
-			const message =
-				e instanceof Error ? e.message : 'Unexpected error occurred';
-			Logger.log(`Verification failed: ${message}`, 'error', e);
-			this.status = { state: 'failed', message };
-		}
+                } catch (e) {
+                        if (isNetworkError(e)) {
+                                Logger.log(
+                                        'Verification failed: update server unreachable',
+                                        'error',
+                                        e
+                                );
+                                this.status = {
+                                        state: 'serverUnreachable',
+                                        message: 'Failed to reach update server. Please try again later.'
+                                };
+                                return;
+                        }
+
+                        const message =
+                                e instanceof Error ? e.message : 'Unexpected error occurred';
+                        Logger.log(`Verification failed: ${message}`, 'error', e);
+                        this.status = { state: 'failed', message };
+                }
 	}
 
         async update(force?: boolean) {
@@ -903,10 +968,23 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			}
 
 			this.status = { state: 'upToDate', progress: 1 };
-		} catch (e) {
-			const message =
-				e instanceof Error ? e.message : 'Unexpected error occurred';
-			Logger.log(`Update failed: ${message}`, 'error', e);
+                } catch (e) {
+                        if (isNetworkError(e)) {
+                                Logger.log(
+                                        'Update failed: update server unreachable',
+                                        'error',
+                                        e
+                                );
+                                this.status = {
+                                        state: 'serverUnreachable',
+                                        message: 'Failed to reach update server. Please try again later.'
+                                };
+                                return;
+                        }
+
+                        const message =
+                                e instanceof Error ? e.message : 'Unexpected error occurred';
+                        Logger.log(`Update failed: ${message}`, 'error', e);
                         this.status = { state: 'failed', message };
                 }
         }
