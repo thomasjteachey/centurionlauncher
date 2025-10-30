@@ -71,6 +71,9 @@ const createWindow = async () => {
 app.whenReady().then(async () => {
         // Initialization
         Preferences.data = await Preferences.load();
+
+        await createWindow();
+
         const launcherUpdateTriggered = await Updater.updateLauncher();
         if (launcherUpdateTriggered) return;
         Updater.verify();
@@ -85,7 +88,6 @@ app.whenReady().then(async () => {
 		optimizer.watchWindowShortcuts(window);
 	});
 
-	await createWindow();
 });
 
 // Quit when all windows are closed
