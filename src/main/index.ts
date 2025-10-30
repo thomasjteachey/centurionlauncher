@@ -37,12 +37,19 @@ const createWindow = async () => {
 
 	createIPCHandler({ router: appRouter, windows: [mainWindow] });
 
-	mainWindow.on('ready-to-show', () => {
-		// Clean up all observers
-		Updater.clearObservers();
+        mainWindow.on('ready-to-show', () => {
+                // Clean up all observers
+                Updater.clearObservers();
 
-		mainWindow?.show();
-	});
+                mainWindow?.show();
+        });
+
+        mainWindow.webContents.once('did-finish-load', async () => {
+                const launcherUpdateTriggered = await Updater.updateLauncher();
+                if (launcherUpdateTriggered) return;
+
+                Updater.verify();
+        });
 
 	mainWindow.webContents.setWindowOpenHandler(details => {
 		shell.openExternal(details.url);
@@ -73,10 +80,6 @@ app.whenReady().then(async () => {
         Preferences.data = await Preferences.load();
 
         await createWindow();
-
-        const launcherUpdateTriggered = await Updater.updateLauncher();
-        if (launcherUpdateTriggered) return;
-        Updater.verify();
 
 	// Set app user model id for windows
 	electronApp.setAppUserModelId('com.electron');
