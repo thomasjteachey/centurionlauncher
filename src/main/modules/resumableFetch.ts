@@ -51,11 +51,17 @@ const resumableFetch = async (
 		Logger.log(`Downloading "${downloadPath}"`);
 	}
 
-	const response = await fetch(url, {
-		headers: { Range: `bytes=${initialPartial}-` }
-	});
+        const response = await fetch(url, {
+                headers: { Range: `bytes=${initialPartial}-` }
+        });
 
-	const total = Number(response.headers.get('content-length'));
+        if (!response.ok && response.status !== 206) {
+                throw new Error(
+                        `Failed to download ${url}: ${response.status} ${response.statusText}`
+                );
+        }
+
+        const total = Number(response.headers.get('content-length'));
 	const startedAt = Date.now();
 
 	const throttled = throttle(options.throttle ?? 0, () => {

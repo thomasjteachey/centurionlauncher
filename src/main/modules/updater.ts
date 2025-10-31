@@ -1,10 +1,12 @@
 import path from 'node:path';
-import { exec } from 'node:child_process';
+import { exec, spawn } from 'node:child_process';
 import os from 'node:os';
 
 import fetch from 'node-fetch';
 import fs from 'fs-extra';
 import yauzl from 'yauzl-promise';
+
+import { app } from 'electron';
 
 import { mainWindow } from '~main/index';
 import { formatDuration, formatFileSize } from '~common/utils';
@@ -22,6 +24,12 @@ const resolveBaseUrl = () => {
 
 const resolvePatchUrl = (filePath: string) =>
         new URL(`patches/${filePath.replace(/^\/+/, '')}`, resolveBaseUrl()).toString();
+
+const resolveLauncherUrl = (filePath: string) =>
+        new URL(filePath.replace(/^\/+/, ''), resolveBaseUrl()).toString();
+
+const LAUNCHER_VERSION_FILE = 'centurionlauncher.version';
+const LAUNCHER_ARCHIVE_FILE = 'centurionlauncher.zip';
 
 // const isReadOnly = async (filePath: string) => {
 // 	try {
@@ -115,6 +123,31 @@ const fetchVersion = async (filePath: string) => {
         }
 };
 
+const compareVersions = (a: string, b: string) => {
+        const parse = (version: string) =>
+                version
+                        .split(/[^0-9]+/)
+                        .filter(Boolean)
+                        .map(part => Number.parseInt(part, 10));
+
+        const left = parse(a);
+        const right = parse(b);
+        const length = Math.max(left.length, right.length);
+
+        for (let i = 0; i < length; i += 1) {
+                const leftPart = left[i] ?? 0;
+                const rightPart = right[i] ?? 0;
+                if (leftPart > rightPart) return 1;
+                if (leftPart < rightPart) return -1;
+        }
+
+        return 0;
+};
+
+const escapeForPowerShell = (value: string) => value.replace(/'/g, "''");
+const encodePowerShellCommand = (command: string) =>
+        Buffer.from(command, 'utf16le').toString('base64');
+
 type ExtractProgressCallback = (progress: number | null, percent?: number) => void;
 
 const extractArchive = async (
@@ -196,16 +229,34 @@ type UpdaterState =
         | 'upToDate'
         | 'failed';
 
+type LauncherUpdateState = 'idle' | 'downloading' | 'pendingClose' | 'applying';
+
+type LauncherUpdateStatus = {
+        state: LauncherUpdateState;
+        progress?: number;
+        message?: string;
+};
+
 export type UpdaterStatus = {
-	state: UpdaterState;
-	progress?: number;
-	message?: string;
+        state: UpdaterState;
+        progress?: number;
+        message?: string;
+        notice?: string;
+        launcher?: LauncherUpdateStatus;
 };
 
 class UpdaterClass extends Observable<UpdaterStatus> {
         #versionCache: Record<string, string> = {};
         #fileCache: Record<string, string[]> = {};
         #pendingInvalidations = new Set<string>();
+        #statusNotice?: string;
+        #pendingLauncherUpdateRunner: (() => void) | null = null;
+        #launcherUpdateScheduled = false;
+
+        #setNotice(message?: string) {
+                this.#statusNotice = message;
+                this.#setStatus({ notice: message }, { preserveLauncher: true });
+        }
 
         #cachePatchFiles = async (
                 clientDir: string,
@@ -262,36 +313,361 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 		await fs.writeJSON(fileCache, this.#fileCache, { spaces: 2 });
 	};
 
-	protected _value: UpdaterStatus = { state: 'needsValidation' };
+        protected _value: UpdaterStatus = { state: 'needsValidation', progress: undefined };
 
-	get status() {
-		return this._value;
-	}
+        get status() {
+                return this._value;
+        }
 
-	private set status(v: UpdaterStatus) {
-		this._value = v;
-		this._notifyObservers(v);
-		if (this.status.state === 'failed') {
-			mainWindow?.setProgressBar(1, { mode: 'error' });
-		} else if (this.status.progress === 1) {
-			mainWindow?.setProgressBar(0);
-		} else {
-			mainWindow?.setProgressBar(this.status.progress ?? 0, {
-				mode: this.status.progress === -1 ? 'indeterminate' : 'normal'
-			});
-		}
-	}
+        #applyStatus(next: UpdaterStatus) {
+                const merged: UpdaterStatus = {
+                        ...next,
+                        notice: next.notice ?? this.#statusNotice
+                };
+                this._value = merged;
+                this._notifyObservers(merged);
 
-	invalidate() {
-		this.status = { state: 'needsValidation' };
-	}
+                const launcherState = merged.launcher?.state;
+                if (launcherState === 'downloading') {
+                        const launcherProgress = merged.launcher?.progress ?? 0;
+                        const mode = launcherProgress === -1 ? 'indeterminate' : 'normal';
+                        mainWindow?.setProgressBar(launcherProgress === -1 ? 0.5 : launcherProgress, {
+                                mode
+                        });
+                        return;
+                }
+
+                if (launcherState === 'pendingClose' || launcherState === 'applying') {
+                        mainWindow?.setProgressBar(1, { mode: 'normal' });
+                        return;
+                }
+
+                if (merged.state === 'failed') {
+                        mainWindow?.setProgressBar(1, { mode: 'error' });
+                        return;
+                }
+
+                if (merged.progress === 1) {
+                        mainWindow?.setProgressBar(0);
+                        return;
+                }
+
+                if (merged.progress === undefined) {
+                        mainWindow?.setProgressBar(0);
+                        return;
+                }
+
+                mainWindow?.setProgressBar(merged.progress ?? 0, {
+                        mode: merged.progress === -1 ? 'indeterminate' : 'normal'
+                });
+        }
+
+        #setStatus(
+                partial: Partial<UpdaterStatus>,
+                {
+                        replace = false,
+                        preserveLauncher = false
+                }: { replace?: boolean; preserveLauncher?: boolean } = {}
+        ) {
+                const base = replace ? ({} as UpdaterStatus) : this._value;
+                const nextState = (partial.state ?? base.state) ?? 'needsValidation';
+                const nextProgress = 'progress' in partial ? partial.progress : base.progress;
+                const nextMessage = 'message' in partial ? partial.message : base.message;
+                const nextNotice = 'notice' in partial ? partial.notice : base.notice;
+                const nextLauncher =
+                        preserveLauncher && !('launcher' in partial)
+                                ? base.launcher
+                                : 'launcher' in partial
+                                        ? partial.launcher
+                                        : base.launcher;
+
+                const next: UpdaterStatus = {
+                        state: nextState,
+                        progress: nextProgress,
+                        message: nextMessage,
+                        notice: nextNotice,
+                        launcher: nextLauncher
+                };
+
+                this.#applyStatus(next);
+        }
+
+        invalidate() {
+                this.#setStatus({
+                        state: 'needsValidation',
+                        progress: undefined,
+                        message: undefined
+                }, { preserveLauncher: true });
+        }
 
         async updateLauncher() {
-                Logger.log('Launcher updates are currently disabled.');
-                this.status = {
-                        state: 'failed',
-                        message: 'Launcher updates are currently disabled. Please download the latest release manually.'
-                };
+                if (os.platform() !== 'win32') return false;
+                if (!app.isPackaged) {
+                        Logger.log('Skipping launcher update in development environment.');
+                        return false;
+                }
+
+                this.#setNotice(undefined);
+                this.#pendingLauncherUpdateRunner = null;
+                this.#launcherUpdateScheduled = false;
+                let updatePath: string | undefined;
+                let downloadPath: string | undefined;
+                let extractPath: string | undefined;
+
+                try {
+                        const versionResponse = await fetch(
+                                resolveLauncherUrl(LAUNCHER_VERSION_FILE)
+                        );
+
+                        if (!versionResponse.ok) {
+                                Logger.log('Failed to fetch launcher version file. Skipping update.');
+                                this.#setNotice(
+                                        `Self-update skipped: no launcher version file found at ${resolveLauncherUrl(
+                                                LAUNCHER_VERSION_FILE
+                                        )}`
+                                );
+                                return false;
+                        }
+
+                        const versionText = (await versionResponse.text()).trim();
+                        if (!versionText) {
+                                Logger.log('Launcher version file is empty. Skipping update.');
+                                this.#setNotice(
+                                        'Self-update skipped: launcher version file does not contain a version.'
+                                );
+                                return false;
+                        }
+
+                        const currentVersion = app.getVersion();
+                        if (compareVersions(versionText, currentVersion) <= 0) {
+                                Logger.log('Launcher is up to date.');
+                                return false;
+                        }
+
+                        Logger.log(
+                                `New launcher version available (${versionText}). Downloading ${LAUNCHER_ARCHIVE_FILE}...`
+                        );
+
+                        this.#setStatus(
+                                {
+                                        launcher: {
+                                                state: 'downloading',
+                                                progress: -1,
+                                                message: 'Preparing launcher update...'
+                                        },
+                                        progress: undefined,
+                                        message: undefined
+                                },
+                                { preserveLauncher: false }
+                        );
+
+                        await fs.ensureDir(path.join(Preferences.userDataDir, 'downloads'));
+                        downloadPath = path.join(
+                                Preferences.userDataDir,
+                                'downloads',
+                                LAUNCHER_ARCHIVE_FILE
+                        );
+                        await fs.ensureDir(path.dirname(downloadPath));
+
+                        await resumableFetch(
+                                resolveLauncherUrl(LAUNCHER_ARCHIVE_FILE),
+                                downloadPath,
+                                progress => {
+                                        const totalBytes = progress.total + progress.initialPartial;
+                                        const downloaded = progress.done + progress.initialPartial;
+                                        const progressRatio =
+                                                totalBytes === 0 ? -1 : Math.min(downloaded / totalBytes, 1);
+                                        const percent =
+                                                totalBytes === 0
+                                                        ? 0
+                                                        : Math.round(Math.min(progressRatio, 1) * 100);
+                                        const elapsedSeconds = Math.max(
+                                                (Date.now() - progress.startedAt) / 1000,
+                                                0.001
+                                        );
+                                        const rate = progress.done / elapsedSeconds;
+                                        const remainingBytes = Math.max(totalBytes - downloaded, 0);
+                                        const eta =
+                                                rate === 0
+                                                        ? undefined
+                                                        : formatDuration(remainingBytes / rate);
+
+                                        this.#setStatus(
+                                                {
+                                                        launcher: {
+                                                                state: 'downloading',
+                                                                progress: progressRatio === -1 ? -1 : progressRatio,
+                                                                message:
+                                                                        eta && progressRatio !== -1
+                                                                                ? `Downloading launcher update... ${percent}% (${eta} remaining)`
+                                                                                : 'Downloading launcher update...'
+                                                        }
+                                                },
+                                                { preserveLauncher: false }
+                                        );
+                                },
+                                {
+                                        throttle: 500
+                                }
+                        );
+
+                        this.#setStatus(
+                                {
+                                        launcher: {
+                                                state: 'downloading',
+                                                progress: -1,
+                                                message: 'Preparing launcher update...'
+                                        }
+                                },
+                                { preserveLauncher: false }
+                        );
+
+                        const execDir = process.env.PORTABLE_EXECUTABLE_DIR
+                                ? process.env.PORTABLE_EXECUTABLE_DIR
+                                : path.dirname(process.execPath);
+                        const execName = path.basename(process.execPath);
+                        extractPath = path.join(
+                                Preferences.userDataDir,
+                                'downloads',
+                                `launcher-extract-${Date.now()}`
+                        );
+                        await fs.ensureDir(extractPath);
+
+                        const extractedFiles = await extractArchive(
+                                'launcher',
+                                downloadPath,
+                                extractPath
+                        );
+                        downloadPath = undefined;
+
+                        const executableEntry = extractedFiles.find(
+                                entry => path.basename(entry) === execName
+                        );
+
+                        if (!executableEntry) {
+                                throw new Error(`Launcher archive did not contain ${execName}.`);
+                        }
+
+                        const extractedExecutablePath = path.join(
+                                extractPath,
+                                executableEntry
+                        );
+
+                        updatePath = path.join(execDir, `${execName}.update`);
+                        await fs.copy(extractedExecutablePath, updatePath, { overwrite: true });
+
+                        const backupPath = path.join(execDir, `${execName}.old`);
+                        const processName = path.parse(execName).name;
+                        const closeMessage =
+                                'Launcher update downloaded. Close the launcher to apply it.';
+                        const command = `
+$ErrorActionPreference = 'SilentlyContinue'
+$source = '${escapeForPowerShell(updatePath)}'
+$target = '${escapeForPowerShell(process.execPath)}'
+$backup = '${escapeForPowerShell(backupPath)}'
+$processName = '${escapeForPowerShell(processName)}'
+try {
+    while (Get-Process -Name $processName -ErrorAction SilentlyContinue) {
+        Start-Sleep -Milliseconds 250
+    }
+    if (Test-Path $backup) { Remove-Item -Path $backup -Force }
+    if (Test-Path $target) { Move-Item -Path $target -Destination $backup -Force }
+    Move-Item -Path $source -Destination $target -Force
+} catch {
+    if (Test-Path $source) { Copy-Item -Path $source -Destination $target -Force }
+}
+`;
+                        const encodedCommand = encodePowerShellCommand(command);
+
+                        if (extractPath) {
+                                await fs.remove(extractPath);
+                                extractPath = undefined;
+                        }
+
+                        this.#pendingLauncherUpdateRunner = () => {
+                                spawn(
+                                        'powershell.exe',
+                                        [
+                                                '-NoLogo',
+                                                '-NoProfile',
+                                                '-WindowStyle',
+                                                'Hidden',
+                                                '-EncodedCommand',
+                                                encodedCommand
+                                        ],
+                                        {
+                                                detached: true,
+                                                stdio: 'ignore',
+                                                windowsHide: true
+                                        }
+                                ).unref();
+                        };
+                        this.#setStatus(
+                                {
+                                        launcher: {
+                                                state: 'pendingClose',
+                                                progress: 1,
+                                                message: closeMessage
+                                        },
+                                        progress: undefined,
+                                        message: undefined
+                                },
+                                { preserveLauncher: false }
+                        );
+                        Logger.log('Launcher update downloaded. Awaiting launcher closure to apply update.');
+                        return true;
+                } catch (error) {
+                        Logger.log('Failed to update launcher', 'error', error);
+                        const message =
+                                error instanceof Error
+                                        ? error.message
+                                        : 'Unknown self-update error occurred';
+                        this.#setNotice(`Self-update failed: ${message}`);
+                        this.#setStatus(
+                                {
+                                        state: 'needsValidation',
+                                        progress: undefined,
+                                        message: undefined,
+                                        launcher: undefined
+                                },
+                                { preserveLauncher: false }
+                        );
+                        if (downloadPath) {
+                                try {
+                                        await fs.remove(downloadPath);
+                                } catch (cleanupError) {
+                                        Logger.log(
+                                                'Failed to clean up launcher download',
+                                                'error',
+                                                cleanupError
+                                        );
+                                }
+                        }
+                        if (updatePath) {
+                                try {
+                                        await fs.remove(updatePath);
+                                } catch (cleanupError) {
+                                        Logger.log(
+                                                'Failed to clean up launcher update file',
+                                                'error',
+                                                cleanupError
+                                        );
+                                }
+                        }
+                        this.#pendingLauncherUpdateRunner = null;
+                        if (extractPath) {
+                                try {
+                                        await fs.remove(extractPath);
+                                } catch (cleanupError) {
+                                        Logger.log(
+                                                'Failed to clean up launcher extraction directory',
+                                                'error',
+                                                cleanupError
+                                        );
+                                }
+                        }
+                        return false;
+                }
         }
 
 	async verify() {
@@ -305,38 +681,56 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			)
 				return;
 
-			if (!clientDir || !(await Preferences.isValidClientDir(clientDir))) {
-				this.status = { state: 'noClient' };
-				return;
-			}
+                        if (!clientDir || !(await Preferences.isValidClientDir(clientDir))) {
+                                this.#setStatus(
+                                        {
+                                                state: 'noClient',
+                                                progress: undefined,
+                                                message: undefined
+                                        },
+                                        { preserveLauncher: true }
+                                );
+                                return;
+                        }
 
                         if (isPortable) {
                                 await fs.remove(path.join(clientDir, 'update-script.bat'));
                         }
 
 			if (os.platform() === 'win32' && clientDir.length > 220) {
-				this.status = {
-					state: 'failed',
-					message:
-						'Path to current install location is too long and may cause issues.'
-				};
-				return;
-			}
+                                this.#setStatus(
+                                        {
+                                                state: 'failed',
+                                                progress: undefined,
+                                                message:
+                                                        'Path to current install location is too long and may cause issues.'
+                                        },
+                                        { preserveLauncher: true }
+                                );
+                                return;
+                        }
 
-			if (await isGameRunning()) {
-				this.status = {
-					state: 'failed',
-					message: 'Please close WoW first, before updating.'
-				};
-				return;
-			}
+                        if (await isGameRunning()) {
+                                this.#setStatus(
+                                        {
+                                                state: 'failed',
+                                                progress: undefined,
+                                                message: 'Please close WoW first, before updating.'
+                                        },
+                                        { preserveLauncher: true }
+                                );
+                                return;
+                        }
 
-			Logger.log(`Verifying client files at ${path.join(clientDir)}...`);
-                        this.status = {
-                                state: 'verifying',
-                                progress: 0,
-                                message: 'Looking for updates...'
-                        };
+                        Logger.log(`Verifying client files at ${path.join(clientDir)}...`);
+                        this.#setStatus(
+                                {
+                                        state: 'verifying',
+                                        progress: 0,
+                                        message: 'Looking for updates...'
+                                },
+                                { preserveLauncher: true }
+                        );
 
                         await this.#loadCache(clientDir);
                         let toDownload = 0;
@@ -352,11 +746,14 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                 ? -1
                                                 : processedVerificationEntries / totalVerificationEntries;
                                 const displayName = meta.label ?? name;
-                                this.status = {
-                                        state: 'verifying',
-                                        progress: verificationProgress,
-                                        message: `Looking for updates... (${displayName})`
-                                };
+                                this.#setStatus(
+                                        {
+                                                state: 'verifying',
+                                                progress: verificationProgress,
+                                                message: `Looking for updates... (${displayName})`
+                                        },
+                                        { preserveLauncher: true }
+                                );
 
                                 const version = await fetchVersion(`${name}.version`);
 
@@ -597,64 +994,97 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
 			await this.#saveCache(clientDir);
 
-			if (toDownload !== 0) {
-				const availableSpace = await getAvailableDiskSpace(clientDir);
-				if (toDownload > availableSpace) {
-					this.status = {
-						state: 'failed',
-						message: `Not enough disk space. Required: ${formatFileSize(
-							toDownload
-						)}, Available: ${formatFileSize(availableSpace)}`
-					};
-					return;
-				}
-			}
+                        if (toDownload !== 0) {
+                                const availableSpace = await getAvailableDiskSpace(clientDir);
+                                if (toDownload > availableSpace) {
+                                        this.#setStatus(
+                                                {
+                                                        state: 'failed',
+                                                        progress: undefined,
+                                                        message: `Not enough disk space. Required: ${formatFileSize(
+                                                                toDownload
+                                                        )}, Available: ${formatFileSize(availableSpace)}`
+                                                },
+                                                { preserveLauncher: true }
+                                        );
+                                        return;
+                                }
+                        }
 
-			this.status =
-				toDownload !== 0
-					? { state: 'updateAvailable', message: formatFileSize(toDownload) }
-					: { state: 'upToDate', progress: 1 };
-		} catch (e) {
-			const message =
-				e instanceof Error ? e.message : 'Unexpected error occurred';
-			Logger.log(`Verification failed: ${message}`, 'error', e);
-			this.status = { state: 'failed', message };
-		}
+                        if (toDownload !== 0) {
+                                this.#setStatus(
+                                        {
+                                                state: 'updateAvailable',
+                                                progress: undefined,
+                                                message: formatFileSize(toDownload)
+                                        },
+                                        { preserveLauncher: true }
+                                );
+                        } else {
+                                this.#setStatus(
+                                        {
+                                                state: 'upToDate',
+                                                progress: 1,
+                                                message: undefined
+                                        },
+                                        { preserveLauncher: true }
+                                );
+                        }
+                } catch (e) {
+                        const message =
+                                e instanceof Error ? e.message : 'Unexpected error occurred';
+                        Logger.log(`Verification failed: ${message}`, 'error', e);
+                        this.#setStatus({ state: 'failed', message }, { preserveLauncher: true });
+                }
 	}
 
         async update(force?: boolean) {
                 const { clientDir, optionalPatches, selectedRealm } = Preferences.data;
                 const realmKey = selectedRealm ?? 'legionnaire';
-		try {
-			if (
+                try {
+                        if (
 				this.status?.state === 'verifying' ||
 				this.status?.state === 'updating'
 			)
 				return;
 
-			if (!clientDir || !(await Preferences.isValidClientDir(clientDir))) {
-				this.status = { state: 'noClient' };
-				return;
-			}
+                        if (!clientDir || !(await Preferences.isValidClientDir(clientDir))) {
+                                this.#setStatus(
+                                        {
+                                                state: 'noClient',
+                                                progress: undefined,
+                                                message: undefined
+                                        },
+                                        { preserveLauncher: true }
+                                );
+                                return;
+                        }
 
 			if (await isGameRunning()) {
-				this.status = {
-					state: 'failed',
-					message: 'Please close WoW first, before updating.'
-				};
-				return;
-			}
+                                this.#setStatus(
+                                        {
+                                                state: 'failed',
+                                                progress: undefined,
+                                                message: 'Please close WoW first, before updating.'
+                                        },
+                                        { preserveLauncher: true }
+                                );
+                                return;
+                        }
 
 			if (force) {
 				await fs.remove(path.join(Preferences.userDataDir, 'downloads'));
 			}
 
 			Logger.log(`Updating client files at ${path.join(clientDir)}...`);
-			this.status = {
-				state: 'updating',
-				progress: -1,
-				message: 'Preparing files...'
-			};
+                        this.#setStatus(
+                                {
+                                        state: 'updating',
+                                        progress: -1,
+                                        message: 'Preparing files...'
+                                },
+                                { preserveLauncher: true }
+                        );
 
                         for (const [name, meta] of Object.entries(FileMap)) {
                                 const isOptionalEnabled =
@@ -676,44 +1106,56 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         continue;
 
 				Logger.log(`Downloading ${name} files...`);
-				const file = await fetchFile(`${name}.zip`, (p: FetchProgress) => {
-					const progress =
-						(p.done + p.initialPartial) / (p.total + p.initialPartial);
-					const percent = Math.round(progress * 100);
-					const elapsed = (Date.now() - p.startedAt) / 1000;
-					const rate = p.done / elapsed;
-					const eta = formatDuration(p.total / rate - elapsed);
-					this.status = {
-						state: 'updating',
-						progress,
-						message: `Downloading ${name}... ${percent}% (${eta} remaining)`
-					};
-				});
+                                const file = await fetchFile(`${name}.zip`, (p: FetchProgress) => {
+                                        const progress =
+                                                (p.done + p.initialPartial) / (p.total + p.initialPartial);
+                                        const percent = Math.round(progress * 100);
+                                        const elapsed = (Date.now() - p.startedAt) / 1000;
+                                        const rate = p.done / elapsed;
+                                        const eta = formatDuration(p.total / rate - elapsed);
+                                        this.#setStatus(
+                                                {
+                                                        state: 'updating',
+                                                        progress,
+                                                        message: `Downloading ${name}... ${percent}% (${eta} remaining)`
+                                                },
+                                                { preserveLauncher: true }
+                                        );
+                                });
 
-				this.status = {
-					state: 'updating',
-					progress: -1,
-					message: `Extracting ${name}...`
-				};
+                                this.#setStatus(
+                                        {
+                                                state: 'updating',
+                                                progress: -1,
+                                                message: `Extracting ${name}...`
+                                        },
+                                        { preserveLauncher: true }
+                                );
                                 const extractedFiles = await extractArchive(
                                         name,
                                         file,
                                         path.join(clientDir, meta.extractPath),
                                         (progress, percent) => {
                                                 if (progress === null) {
-                                                        this.status = {
-                                                                state: 'updating',
-                                                                progress: -1,
-                                                                message: `Extracting ${name}...`
-                                                        };
+                                                        this.#setStatus(
+                                                                {
+                                                                        state: 'updating',
+                                                                        progress: -1,
+                                                                        message: `Extracting ${name}...`
+                                                                },
+                                                                { preserveLauncher: true }
+                                                        );
                                                         return;
                                                 }
 
-                                                this.status = {
-                                                        state: 'updating',
-                                                        progress,
-                                                        message: `Extracting ${name}... ${percent}%`
-                                                };
+                                                this.#setStatus(
+                                                        {
+                                                                state: 'updating',
+                                                                progress,
+                                                                message: `Extracting ${name}... ${percent}%`
+                                                        },
+                                                        { preserveLauncher: true }
+                                                );
                                         }
                                 );
 
@@ -736,13 +1178,60 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 await this.#saveCache(clientDir);
 			}
 
-			this.status = { state: 'upToDate', progress: 1 };
-		} catch (e) {
-			const message =
-				e instanceof Error ? e.message : 'Unexpected error occurred';
-			Logger.log(`Update failed: ${message}`, 'error', e);
-                        this.status = { state: 'failed', message };
+                        this.#setStatus(
+                                { state: 'upToDate', progress: 1 },
+                                { preserveLauncher: true }
+                        );
+                } catch (e) {
+                        const message =
+                                e instanceof Error ? e.message : 'Unexpected error occurred';
+                        Logger.log(`Update failed: ${message}`, 'error', e);
+                        this.#setStatus({ state: 'failed', message }, { preserveLauncher: true });
                 }
+        }
+
+        applyLauncherUpdate() {
+                if (!this.#pendingLauncherUpdateRunner) return false;
+                if (this.#launcherUpdateScheduled) return true;
+
+                this.#launcherUpdateScheduled = true;
+                this.#setStatus(
+                        {
+                                launcher: {
+                                        state: 'applying',
+                                        progress: -1,
+                                        message: 'Closing to apply launcher update...'
+                                }
+                        },
+                        { preserveLauncher: false }
+                );
+
+                this.#pendingLauncherUpdateRunner();
+                this.#pendingLauncherUpdateRunner = null;
+
+                app.quit();
+                return true;
+        }
+
+        handleLauncherBeforeQuit() {
+                if (!this.#pendingLauncherUpdateRunner) return;
+                if (this.#launcherUpdateScheduled) return;
+
+                this.#launcherUpdateScheduled = true;
+
+                this.#setStatus(
+                        {
+                                launcher: {
+                                        state: 'applying',
+                                        progress: -1,
+                                        message: 'Closing to apply launcher update...'
+                                }
+                        },
+                        { preserveLauncher: false }
+                );
+
+                this.#pendingLauncherUpdateRunner();
+                this.#pendingLauncherUpdateRunner = null;
         }
 
         async ensureRealmPatchesFor(realmKey: RealmId) {

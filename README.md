@@ -27,3 +27,8 @@ $ npm run dist
 ```
 
 > The Windows build now produces only the portable executable (no installer).
+
+## Launcher self-update hosting
+
+See [docs/self-update.md](docs/self-update.md) for details on how to host the launcher
+archive and version file so that in-app self-updates work correctly.
