@@ -3,8 +3,8 @@ export const DEFAULT_REALMLIST = '136.56.187.218';
 export const DEFAULT_AZEROTHCORE_REALMLIST = '136.56.187.218:3726';
 
 export const REALM_IDS = [
-        'legionnaire',
         'legionnaire_plus',
+        'legionnaire',
         'barracks',
         'barracks_plus',
         'trinityworld',
@@ -41,16 +41,16 @@ export const REALMS: Record<
                 realmlistType: 'trinitycore' | 'azerothcore';
         }
 > = {
-        legionnaire: {
-                label: 'Legionnaire',
-                realmName: 'Legionnaire',
-                build: BUILD_12340,
-                realmlistType: 'trinitycore'
-        },
         legionnaire_plus: {
                 label: 'Legionnaire+',
                 realmName: 'Legionnaire Plus',
                 build: BUILD_12341,
+                realmlistType: 'trinitycore'
+        },
+        legionnaire: {
+                label: 'Legionnaire',
+                realmName: 'Legionnaire',
+                build: BUILD_12340,
                 realmlistType: 'trinitycore'
         },
         barracks: {

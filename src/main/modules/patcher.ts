@@ -17,7 +17,7 @@ export const patchConfig = async () => {
         const { clientDir, selectedRealm, realmList, azerothcoreRealmList } = Preferences.data;
         if (!clientDir) return;
 
-        const realmKey = selectedRealm ?? 'legionnaire';
+        const realmKey = selectedRealm ?? 'legionnaire_plus';
         const realmConfig = REALMS[realmKey];
 
         await Updater.ensureRealmPatchesFor(realmKey);

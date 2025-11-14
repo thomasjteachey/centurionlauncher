@@ -69,7 +69,8 @@ export const isGameRunning = async () => {
 
 const fetchFile = async (
 	filePath: string,
-	progressCb?: (p: FetchProgress) => void
+	progressCb?: (p: FetchProgress) => void,
+	force: boolean = false
 ) => {
 	try {
 		await fs.ensureDir(path.join(Preferences.userDataDir, 'downloads'));
@@ -83,7 +84,8 @@ const fetchFile = async (
                         downloadPath,
                         progressCb,
                         {
-				throttle: 500
+				throttle: 500,
+				force
 			}
 		);
 		return downloadPath;
@@ -113,6 +115,16 @@ const fetchVersion = async (filePath: string) => {
                 Logger.log(`Failed to download ${filePath}`, 'error', e);
                 throw Error(`Failed to download ${filePath}`);
         }
+};
+
+/**
+ * Returns true if the error is the yauzl-promise assertion for a corrupt
+ * Local File Header:
+ *   "Invalid Local File Header signature"
+ */
+const isCorruptZipLocalHeaderError = (err: unknown): boolean => {
+        if (!(err instanceof Error)) return false;
+        return /Invalid Local File Header signature/i.test(err.message);
 };
 
 type ExtractProgressCallback = (progress: number | null, percent?: number) => void;
@@ -185,6 +197,42 @@ const extractArchive = async (
         }
         return extractedFiles;
 };
+/**
+ * Wrapper around extractArchive that retries once when the ZIP file
+ * is clearly corrupt (Invalid Local File Header signature).
+ *
+ * @param name      Patch name (e.g. "HDTexturesLegionnaire")
+ * @param file      Full path to the downloaded .zip on disk
+ * @param filePath  Destination root on disk
+ * @param progressCb Extraction progress callback (same shape as extractArchive)
+ */
+const extractArchiveWithRetry = async (
+        name: string,
+        file: string,
+        filePath: string,
+        progressCb?: ExtractProgressCallback
+): Promise<string[]> => {
+        try {
+                return await extractArchive(name, file, filePath, progressCb);
+        } catch (err) {
+                if (!isCorruptZipLocalHeaderError(err)) {
+                        throw err;
+                }
+
+                Logger.log(
+                        `Corrupt patch archive detected for "${name}" at "${file}". ` +
+                                `Forcing re-download and retrying once.`,
+                        'error',
+                        err
+                );
+
+                const patchFileName = path.basename(file);
+                const freshFile = await fetchFile(patchFileName, undefined, true);
+
+                return await extractArchive(name, freshFile, filePath, progressCb);
+        }
+};
+
 
 type UpdaterState =
         | 'needsValidation'
@@ -295,9 +343,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
         }
 
 	async verify() {
-                const { clientDir, optionalPatches, selectedRealm, isPortable } =
-                        Preferences.data;
-                const realmKey = selectedRealm ?? 'legionnaire';
+		const { clientDir, optionalPatches, selectedRealm, isPortable } =
+		Preferences.data;
+		const realmKey = selectedRealm ?? 'legionnaire_plus';
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -624,7 +672,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
         async update(force?: boolean) {
                 const { clientDir, optionalPatches, selectedRealm } = Preferences.data;
-                const realmKey = selectedRealm ?? 'legionnaire';
+		const realmKey = selectedRealm ?? 'legionnaire_plus';
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -695,7 +743,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 					progress: -1,
 					message: `Extracting ${name}...`
 				};
-                                const extractedFiles = await extractArchive(
+                                const extractedFiles = await extractArchiveWithRetry(
                                         name,
                                         file,
                                         path.join(clientDir, meta.extractPath),
@@ -903,7 +951,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 `Missing ${name} files for ${realmKey}. Downloading to restore realm patches...`
                         );
                         const file = await fetchFile(`${name}.zip`);
-                        const extractedFiles = await extractArchive(
+                        const extractedFiles = await extractArchiveWithRetry(
                                 name,
                                 file,
                                 path.join(clientDir, meta.extractPath)

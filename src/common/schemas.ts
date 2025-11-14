@@ -35,6 +35,7 @@ const f = {
 
 export const PreferencesSchema = z.object({
         isPortable: z.boolean().optional(),
+        isDev: f.boolean(),
         clientDir: z.string().optional(),
         reopenLauncher: f.boolean(),
         cleanWdb: f.boolean(true),
@@ -59,7 +60,7 @@ export const PreferencesSchema = z.object({
                         height: z.number()
                 })
                 .nullish(),
-        selectedRealm: z.enum(REALM_IDS).default('legionnaire'),
+        selectedRealm: z.enum(REALM_IDS).default('legionnaire_plus'),
         optionalPatches: z.array(z.string()).default([])
 });
 export type PreferencesSchema = z.infer<typeof PreferencesSchema>;
