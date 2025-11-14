@@ -22,20 +22,30 @@ const RealmSwitch = () => {
                 await invalidate.mutateAsync();
         };
 
+        const availableRealmEntries: [RealmId, (typeof REALMS)[RealmId]][] = pref?.isDev
+                ? (Object.entries(REALMS) as [RealmId, (typeof REALMS)[RealmId]][])
+                : [['legionnaire_plus', REALMS.legionnaire_plus]];
+
+        const selectedRealm =
+                pref?.selectedRealm &&
+                availableRealmEntries.some(([id]) => id === pref.selectedRealm)
+                        ? pref.selectedRealm
+                        : 'legionnaire_plus';
+
         return (
                 <>
                         <p className="text-2xl">Select server:</p>
                         <div className="flex">
                                 <select
                                         className="w-full rounded border border-dark bg-dark p-3 text-lg uppercase text-text"
-                                        value={pref?.selectedRealm ?? ''}
+                                        value={selectedRealm}
                                         onChange={event => onSelect(event.target.value as RealmId)}
                                         disabled={isLoading}
                                 >
                                         <option value="" disabled hidden>
                                                 Select a realm
                                         </option>
-                                        {Object.entries(REALMS).map(([id, meta]) => (
+                                        {availableRealmEntries.map(([id, meta]) => (
                                                 <option key={id} value={id}>
                                                         {meta.label}
                                                 </option>

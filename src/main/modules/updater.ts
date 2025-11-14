@@ -343,9 +343,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
         }
 
 	async verify() {
-                const { clientDir, optionalPatches, selectedRealm, isPortable } =
-                        Preferences.data;
-                const realmKey = selectedRealm ?? 'legionnaire';
+		const { clientDir, optionalPatches, selectedRealm, isPortable } =
+		Preferences.data;
+		const realmKey = selectedRealm ?? 'legionnaire_plus';
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -672,7 +672,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
         async update(force?: boolean) {
                 const { clientDir, optionalPatches, selectedRealm } = Preferences.data;
-                const realmKey = selectedRealm ?? 'legionnaire';
+		const realmKey = selectedRealm ?? 'legionnaire_plus';
 		try {
 			if (
 				this.status?.state === 'verifying' ||
