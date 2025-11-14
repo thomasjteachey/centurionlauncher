@@ -5,6 +5,11 @@ import Logger from './logger';
 
 type ProgressOptions = {
 	throttle?: number;
+	/**
+	 * When true, ignore any existing complete download and delete
+	 * any partial file before starting. Used for "self-heal" retries.
+	 */
+	force?: boolean;
 };
 
 export type FetchProgress = {
@@ -32,12 +37,33 @@ const resumableFetch = async (
 	callback?: (args: FetchProgress) => void,
 	options: ProgressOptions = {}
 ) => {
-	if (await fs.exists(downloadPath)) {
+	const { force, throttle: throttleMs } = options;
+	const partialPath = `${downloadPath}.partial`;
+
+	if (!force && (await fs.exists(downloadPath))) {
 		Logger.log(`File "${downloadPath}" already exists. Skipping download.`);
 		return;
 	}
 
-	const partialPath = `${downloadPath}.partial`;
+	if (force) {
+		try {
+			if (await fs.exists(downloadPath)) {
+				Logger.log(`Force re-download requested. Removing "${downloadPath}".`);
+				await fs.remove(downloadPath);
+			}
+			if (await fs.exists(partialPath)) {
+				Logger.log(`Force re-download requested. Removing "${partialPath}".`);
+				await fs.remove(partialPath);
+			}
+		} catch (e) {
+			Logger.log(
+				`Failed to remove existing download for "${downloadPath}"`,
+				'error',
+				e
+			);
+		}
+	}
+
 	const initialPartial = (await fs.exists(partialPath))
 		? (await fs.stat(partialPath)).size
 		: 0;
@@ -58,7 +84,7 @@ const resumableFetch = async (
 	const total = Number(response.headers.get('content-length'));
 	const startedAt = Date.now();
 
-	const throttled = throttle(options.throttle ?? 0, () => {
+	const throttled = throttle(throttleMs ?? 0, () => {
 		callback?.({ total, done, initialPartial, startedAt });
 	});
 
