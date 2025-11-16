@@ -8,6 +8,7 @@ const RealmSwitch = () => {
         const setPref = api.preferences.set.useMutation();
 
         const invalidate = api.updater.invalidate.useMutation();
+        const verify = api.updater.verify.useMutation();
 
         const [isLoading, setIsLoading] = useState(false);
         api.updater.observe.useSubscription(undefined, {
@@ -20,6 +21,7 @@ const RealmSwitch = () => {
                 if (pref?.selectedRealm === realm) return;
                 await setPref.mutateAsync({ selectedRealm: realm });
                 await invalidate.mutateAsync();
+                await verify.mutateAsync();
         };
 
         const availableRealmEntries: [RealmId, (typeof REALMS)[RealmId]][] = pref?.isDev
