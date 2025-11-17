@@ -13,7 +13,26 @@ import { appRouter } from './api/root';
 
 export let mainWindow: BrowserWindow | null = null;
 
-const createWindow = async () => {
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+        app.quit();
+        process.exit(0);
+}
+
+app.on('second-instance', () => {
+        if (mainWindow) {
+                if (mainWindow.isMinimized()) {
+                        mainWindow.restore();
+                }
+
+                mainWindow.focus();
+        } else {
+                createWindow();
+        }
+});
+
+async function createWindow() {
 	const { rememberPosition, windowPosition } = Preferences.data;
 
 	const position = rememberPosition
@@ -63,7 +82,7 @@ const createWindow = async () => {
 	} else {
 		mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
 	}
-};
+}
 
 // This method will be called when Electron has finished
 // initialization and is ready to create browser windows.

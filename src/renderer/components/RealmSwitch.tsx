@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { REALMS, type RealmId } from '~common/constants';
+import { type UpdaterStatus } from '~main/types';
 import { api } from '~renderer/utils/api';
 
 const RealmSwitch = () => {
@@ -10,11 +11,14 @@ const RealmSwitch = () => {
         const invalidate = api.updater.invalidate.useMutation();
         const verify = api.updater.verify.useMutation();
 
-        const [isLoading, setIsLoading] = useState(false);
+        const [updaterState, setUpdaterState] = useState<UpdaterStatus['state']>('needsValidation');
         api.updater.observe.useSubscription(undefined, {
-                onData: data =>
-                        setIsLoading(data.state === 'verifying' || data.state === 'updating')
+                onData: data => setUpdaterState(data.state)
         });
+
+        const isUpdaterBusy = updaterState === 'verifying' || updaterState === 'updating';
+        const isMutating = setPref.isLoading || invalidate.isLoading || verify.isLoading;
+        const isLoading = isUpdaterBusy || isMutating;
 
         const onSelect = async (realm: RealmId) => {
                 if (isLoading) return;
