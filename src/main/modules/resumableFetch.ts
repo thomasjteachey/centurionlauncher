@@ -77,40 +77,53 @@ const resumableFetch = async (
 		Logger.log(`Downloading "${downloadPath}"`);
 	}
 
-	const response = await fetch(url, {
-		headers: { Range: `bytes=${initialPartial}-` }
-	});
+        const response = await fetch(url, {
+                headers: { Range: `bytes=${initialPartial}-` }
+        });
 
-	const total = Number(response.headers.get('content-length'));
-	const startedAt = Date.now();
+        if (!response.ok || !response.body) {
+                throw new Error(
+                        `Failed to download "${url}" (${response.status} ${response.statusText})`
+                );
+        }
 
-	const throttled = throttle(throttleMs ?? 0, () => {
-		callback?.({ total, done, initialPartial, startedAt });
-	});
+        const total = Number(response.headers.get('content-length'));
+        const startedAt = Date.now();
 
-	const chunks: Buffer[] = [];
-	response.body.on('data', chunk => {
-		done += chunk.length;
-		chunks.push(chunk);
-		throttled();
-	});
-	let finished = false;
-	let processed = 0;
-	response.body.on('end', async () => {
-		finished = true;
-	});
+        const throttled = throttle(throttleMs ?? 0, () => {
+                callback?.({ total, done, initialPartial, startedAt });
+        });
 
-	while (!finished || processed < chunks.length) {
-		if (processed === chunks.length) {
-			await new Promise(r => setTimeout(r, 100));
-			continue;
-		}
-		await fs.appendFile(partialPath, chunks[processed]);
-		processed++;
-	}
+        await new Promise<void>((resolve, reject) => {
+                const writeStream = fs.createWriteStream(partialPath, {
+                        flags: initialPartial ? 'a' : 'w'
+                });
 
-	await fs.rename(partialPath, downloadPath);
-	Logger.log(`Downloaded "${downloadPath}"`);
+                response.body?.on('data', chunk => {
+                        done += chunk.length;
+                        throttled();
+                });
+
+                response.body?.on('end', () => {
+                        callback?.({ total, done, initialPartial, startedAt });
+                });
+
+                response.body?.on('error', error => {
+                        writeStream.destroy(error);
+                        reject(error);
+                });
+
+                writeStream.on('error', reject);
+
+                writeStream.on('finish', () => {
+                        resolve();
+                });
+
+                response.body?.pipe(writeStream);
+        });
+
+        await fs.rename(partialPath, downloadPath);
+        Logger.log(`Downloaded "${downloadPath}"`);
 };
 
 export default resumableFetch;
