@@ -37,22 +37,28 @@ const resumableFetch = async (
 	callback?: (args: FetchProgress) => void,
 	options: ProgressOptions = {}
 ) => {
-	const { force, throttle: throttleMs } = options;
+	const { throttle: throttleMs = 0, force = false } = options;
 	const partialPath = `${downloadPath}.partial`;
 
+	// If the full file already exists and we're not forcing, skip.
 	if (!force && (await fs.exists(downloadPath))) {
 		Logger.log(`File "${downloadPath}" already exists. Skipping download.`);
 		return;
 	}
 
+	// Force mode = wipe any existing full/partial files first.
 	if (force) {
 		try {
 			if (await fs.exists(downloadPath)) {
-				Logger.log(`Force re-download requested. Removing "${downloadPath}".`);
+				Logger.log(
+					`Force re-download requested. Removing "${downloadPath}".`
+				);
 				await fs.remove(downloadPath);
 			}
 			if (await fs.exists(partialPath)) {
-				Logger.log(`Force re-download requested. Removing "${partialPath}".`);
+				Logger.log(
+					`Force re-download requested. Removing "${partialPath}".`
+				);
 				await fs.remove(partialPath);
 			}
 		} catch (e) {
@@ -81,6 +87,13 @@ const resumableFetch = async (
 		headers: { Range: `bytes=${initialPartial}-` }
 	});
 
+	// NEW: treat bad HTTP responses / missing body as hard errors
+	if (!response.ok || !response.body) {
+		throw new Error(
+			`Failed to download "${url}": ${response.status} ${response.statusText}`
+		);
+	}
+
 	const total = Number(response.headers.get('content-length'));
 	const startedAt = Date.now();
 
@@ -89,24 +102,44 @@ const resumableFetch = async (
 	});
 
 	const chunks: Buffer[] = [];
-	response.body.on('data', chunk => {
-		done += chunk.length;
-		chunks.push(chunk);
-		throttled();
-	});
 	let finished = false;
 	let processed = 0;
-	response.body.on('end', async () => {
+	let error: Error | null = null;
+
+	response.body.on('data', chunk => {
+		const buf = chunk as Buffer;
+		done += buf.length;
+		chunks.push(buf);
+		throttled();
+	});
+
+	response.body.on('end', () => {
+		finished = true;
+	});
+
+	// NEW: handle stream errors so we don't hang forever at 99–100%
+	response.body.on('error', err => {
+		Logger.log(
+			`Stream error while downloading "${downloadPath}": ${(err as Error).message}`,
+			'error',
+			err
+		);
+		error = err as Error;
 		finished = true;
 	});
 
 	while (!finished || processed < chunks.length) {
 		if (processed === chunks.length) {
-			await new Promise(r => setTimeout(r, 100));
+			await new Promise<void>(r => setTimeout(r, 100));
 			continue;
 		}
 		await fs.appendFile(partialPath, chunks[processed]);
 		processed++;
+	}
+
+	// If we ended because of an error, don't promote the partial to full.
+	if (error) {
+		throw error;
 	}
 
 	await fs.rename(partialPath, downloadPath);
