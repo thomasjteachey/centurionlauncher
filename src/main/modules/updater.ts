@@ -8,60 +8,45 @@ import yauzl from 'yauzl-promise';
 
 import { mainWindow } from '~main/index';
 import { formatDuration, formatFileSize } from '~common/utils';
-import {
-	DEFAULT_LAUNCHER_UPDATE_URL,
-	FileMap,
-	type RealmId
-} from '~common/constants';
+import { DEFAULT_LAUNCHER_UPDATE_URL, FileMap, type RealmId } from '~common/constants';
 
 import Logger from './logger';
 import Preferences from './preferences';
 import Observable from './observable';
 import resumableFetch, { type FetchProgress } from './resumableFetch';
 
-type UpdaterState =
-	| 'idle'
-	| 'noClient'
-	| 'verifying'
-	| 'updateAvailable'
-	| 'updating'
-	| 'pendingRestart'
-	| 'failed'
-	| 'notAvailable'
-	| 'upToDate';
-
-export type UpdaterStatus = {
-	state: UpdaterState;
-	progress?: number;
-	message?: string;
+const resolveBaseUrl = () => {
+        const { launcherUpdateUrl } = Preferences.data;
+        return launcherUpdateUrl ?? DEFAULT_LAUNCHER_UPDATE_URL;
 };
 
-const execAsync = async (commands: { [platform: string]: string }) => {
-	const command = commands[process.platform];
-	if (!command) {
-		return '';
-	}
-	return new Promise<string>((resolve, reject) => {
+const resolvePatchUrl = (filePath: string) =>
+        new URL(`patches/${filePath.replace(/^\/+/, '')}`, resolveBaseUrl()).toString();
+
+// const isReadOnly = async (filePath: string) => {
+// 	try {
+// 		const { mode } = await fs.stat(filePath);
+// 		return !(mode & fs.constants.S_IWUSR);
+// 	} catch (e) {
+// 		return false;
+// 	}
+// };
+
+const execAsync = (commands: Partial<Record<NodeJS.Platform, string>>) => {
+	const command = commands[os.platform()];
+	if (!command) return Promise.resolve(undefined);
+	return new Promise<string | undefined>(resolve => {
 		exec(command, (error, stdout) => {
-			if (error) {
-				reject(error);
-				return;
-			}
-			resolve(stdout.toString());
+			if (error) resolve(undefined);
+			else resolve(stdout);
 		});
 	});
 };
 
-const getFreeSpaceBytes = async (clientPath?: string): Promise<number> => {
-	if (!clientPath) return Infinity;
-
+const getAvailableDiskSpace = async (clientPath?: string) => {
 	const response = await execAsync({
-		darwin: `df -g "${clientPath}" | tail -1 | awk '{print $4}'`,
-		linux: `df -B1 "${clientPath}" | tail -1 | awk '{print $4}'`,
 		win32:
-			'%SYSTEMROOT%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command "$drive = (Get-Item \\"' +
-			clientPath +
-			'\\").PSDrive.Name; Get-PSDrive -Name $drive | Select-Object Name, @{n=\'Free\';e={($_.Free / 1GB)}}"'
+			'%SYSTEMROOT%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -command "Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{n=\'Free\';e={($_.Free / 1GB)}}"'
 	});
 	if (!response) return Infinity;
 	const drive = clientPath?.split(':')[0] ?? 'C';
@@ -94,34 +79,15 @@ const fetchFile = async (
 			'downloads',
 			filePath
 		);
-
-		const partialPath = `${downloadPath}.partial`;
-
-		if (force) {
-			Logger.log(`Force re-download requested for "${filePath}"`);
-			if (await fs.pathExists(downloadPath)) {
-				await fs.remove(downloadPath);
+                await resumableFetch(
+                        resolvePatchUrl(filePath),
+                        downloadPath,
+                        progressCb,
+                        {
+				throttle: 500,
+				force
 			}
-			if (await fs.pathExists(partialPath)) {
-				await fs.remove(partialPath);
-			}
-		}
-
-		const updateUrl =
-			Preferences.data.updateUrl || DEFAULT_LAUNCHER_UPDATE_URL;
-		const url = `${updateUrl}${filePath}`;
-
-		Logger.log(`Downloading file from "${url}"`);
-
-		await resumableFetch(url, downloadPath, progressCb, {
-			throttle: 250
-		});
-
-		const stats = await fs.stat(downloadPath);
-		if (!stats.isFile()) {
-			throw new Error('Downloaded file is not a valid file');
-		}
-
+		);
 		return downloadPath;
 	} catch (e) {
 		Logger.log(`Failed to download ${filePath}`, 'error', e);
@@ -129,17 +95,46 @@ const fetchFile = async (
 	}
 };
 
+const fetchSize = async (filePath: string) => {
+        try {
+                const response = await fetch(resolvePatchUrl(filePath), {
+                        method: 'HEAD'
+                });
+
+                if (!response.ok) {
+                        throw new Error(
+                                `Failed to fetch metadata for ${filePath} (${response.status} ${response.statusText})`
+                        );
+                }
+
+                return parseInt(response.headers.get('content-length') ?? '0');
+        } catch (e) {
+                Logger.log(`Failed to download ${filePath}`, 'error', e);
+                throw Error(`Failed to download ${filePath}`);
+        }
+};
+
 const fetchVersion = async (filePath: string) => {
-	const updateUrl =
-		Preferences.data.updateUrl || DEFAULT_LAUNCHER_UPDATE_URL;
-	const url = `${updateUrl}${filePath}`;
-	try {
-		const response = await fetch(url);
-		return response.text();
-	} catch (e) {
-		Logger.log(`Failed to download ${filePath}`, 'error', e);
-		throw Error(`Failed to download ${filePath}`);
-	}
+        try {
+                const response = await fetch(resolvePatchUrl(filePath));
+
+                if (!response.ok) {
+                        throw new Error(
+                                `Failed to fetch metadata for ${filePath} (${response.status} ${response.statusText})`
+                        );
+                }
+
+                const version = (await response.text()).trim();
+
+                if (/[/\\<>:"|?*]/.test(version)) {
+                        throw new Error(`Invalid version received for ${filePath}`);
+                }
+
+                return version;
+        } catch (e) {
+                Logger.log(`Failed to download ${filePath}`, 'error', e);
+                throw Error(`Failed to download ${filePath}`);
+        }
 };
 
 /**
@@ -148,129 +143,194 @@ const fetchVersion = async (filePath: string) => {
  *   "Invalid Local File Header signature"
  */
 const isCorruptZipLocalHeaderError = (err: unknown): boolean => {
-	if (!(err instanceof Error)) return false;
-	return /Invalid Local File Header signature/i.test(err.message);
+        if (!(err instanceof Error)) return false;
+        return /Invalid Local File Header signature/i.test(err.message);
 };
 
-const getPlatformStrings = () => ({
-	win32: 'win32',
-	darwin: 'darwin',
-	linux: 'linux'
-});
+type ExtractProgressCallback = (progress: number | null, percent?: number) => void;
 
-const getDirectorsMessage = (realmKey: RealmId) => {
-	switch (realmKey) {
-		case 'prince_arthas':
-			return 'Your suffering is not yet over.';
-		case 'barracks':
-			return 'Our greatest accomplishments are forged in fire.';
-		case 'legionnaire_plus':
-		default:
-			return 'Always act honorably, even when no one is around.';
-	}
+const extractArchive = async (
+        name: string,
+        file: string,
+        filePath: string,
+        progressCb?: ExtractProgressCallback
+) => {
+        let finished = false;
+        const archive = await yauzl.open(file);
+        const extractedFiles: string[] = [];
+        try {
+                for await (const entry of archive) {
+                        Logger.log(`Extracting "${entry.filename}"...`);
+                        if (entry.filename.endsWith('/')) {
+                                await fs.ensureDir(path.join(filePath, entry.filename));
+                        } else {
+                                const dest = path.join(filePath, entry.filename);
+                                await fs.ensureDir(path.dirname(dest));
+                                const readStream = await entry.openReadStream();
+                                const writeStream = fs.createWriteStream(dest);
+                                const totalBytes = entry.uncompressedSize;
+                                const hasKnownSize = Number.isFinite(totalBytes) && totalBytes > 0;
+
+                                if (!hasKnownSize) {
+                                        progressCb?.(null);
+                                } else {
+                                        progressCb?.(0, 0);
+                                }
+
+                                await new Promise((resolve, reject) => {
+                                        let extractedBytes = 0;
+
+                                        readStream.on('data', (chunk: Buffer) => {
+                                                if (!hasKnownSize) return;
+
+                                                extractedBytes += chunk.length;
+                                                const progress = Math.min(
+                                                        extractedBytes / (totalBytes ?? 1),
+                                                        1
+                                                );
+                                                const percent = Math.round(progress * 100);
+                                                progressCb?.(progress, percent);
+                                        });
+
+                                        readStream.on('error', reject);
+                                        writeStream.on('error', reject);
+                                        writeStream.on('finish', () => {
+                                                if (hasKnownSize) {
+                                                        progressCb?.(1, 100);
+                                                }
+                                                resolve(undefined);
+                                        });
+
+                                        readStream.pipe(writeStream);
+                                });
+
+                                extractedFiles.push(entry.filename);
+                        }
+                }
+                finished = true;
+        } finally {
+                await archive.close();
+                if (finished) {
+                        Logger.log(`Removing "${file}"...`);
+                        await fs.remove(file);
+                }
+        }
+        return extractedFiles;
+};
+/**
+ * Wrapper around extractArchive that retries once when the ZIP file
+ * is clearly corrupt (Invalid Local File Header signature).
+ *
+ * @param name      Patch name (e.g. "HDTexturesLegionnaire")
+ * @param file      Full path to the downloaded .zip on disk
+ * @param filePath  Destination root on disk
+ * @param progressCb Extraction progress callback (same shape as extractArchive)
+ */
+const extractArchiveWithRetry = async (
+        name: string,
+        file: string,
+        filePath: string,
+        progressCb?: ExtractProgressCallback
+): Promise<string[]> => {
+        try {
+                return await extractArchive(name, file, filePath, progressCb);
+        } catch (err) {
+                if (!isCorruptZipLocalHeaderError(err)) {
+                        throw err;
+                }
+
+                Logger.log(
+                        `Corrupt patch archive detected for "${name}" at "${file}". ` +
+                                `Forcing re-download and retrying once.`,
+                        'error',
+                        err
+                );
+
+                const patchFileName = path.basename(file);
+                const freshFile = await fetchFile(patchFileName, undefined, true);
+
+                return await extractArchive(name, freshFile, filePath, progressCb);
+        }
+};
+
+
+type UpdaterState =
+        | 'needsValidation'
+        | 'verifying'
+        | 'serverUnreachable'
+        | 'noClient'
+        | 'updateAvailable'
+        | 'updating'
+        | 'upToDate'
+        | 'failed';
+
+export type UpdaterStatus = {
+	state: UpdaterState;
+	progress?: number;
+	message?: string;
 };
 
 class UpdaterClass extends Observable<UpdaterStatus> {
-	#versionCache: Record<string, string> = {};
-	#fileCache: Record<string, string[]> = {};
-	#pendingInvalidations = new Set<string>();
+        #versionCache: Record<string, string> = {};
+        #fileCache: Record<string, string[]> = {};
+        #pendingInvalidations = new Set<string>();
 
-	#cachePatchFiles = async (
-		clientDir: string,
-		name: string,
-		version: string,
-		extractPath: string,
-		files: string[]
-	) => {
-		if (files.length === 0) return;
+        #cachePatchFiles = async (
+                clientDir: string,
+                name: string,
+                version: string,
+                extractPath: string,
+                files: string[]
+        ) => {
+                if (files.length === 0) return;
 
-		const cacheRoot = path.join(clientDir, '.launcher', 'cached', name);
-		const cachePath = path.join(cacheRoot, version);
+                const cacheRoot = path.join(clientDir, '.launcher', 'cached', name);
+                const cachePath = path.join(cacheRoot, version);
 
-		await fs.ensureDir(cacheRoot);
+                try {
+                        await fs.ensureDir(path.join(clientDir, '.launcher', 'cached'));
+                        await fs.remove(cacheRoot);
+                        await fs.ensureDir(cachePath);
 
-		// Clear out old versions of this patch, keep only the current
-		for (const entry of await fs.readdir(cacheRoot)) {
-			if (entry === version) continue;
-			const otherPath = path.join(cacheRoot, entry);
-			await fs.remove(otherPath);
-		}
+                        for (const file of files) {
+                                const source = path.join(clientDir, extractPath, file);
+                                if (!(await fs.pathExists(source))) continue;
 
-		await fs.ensureDir(cachePath);
-
-		for (const file of files) {
-			const source = path.join(clientDir, extractPath, file);
-			if (!(await fs.pathExists(source))) continue;
-
-			const destination = path.join(cachePath, file);
-			await fs.ensureDir(path.dirname(destination));
-			try {
-				await fs.copy(source, destination, { overwrite: true });
-			} catch (error) {
-				console.error(error);
-			}
-		}
-	};
+                                const destination = path.join(cachePath, file);
+                                await fs.ensureDir(path.dirname(destination));
+                                await fs.copy(source, destination, { overwrite: true });
+                        }
+                } catch (e) {
+                        Logger.log(`Failed to populate cache for ${name}@${version}`, 'error', e);
+                }
+        };
 
 	#loadCache = async (clientDir: string) => {
-		const cacheDir = path.join(clientDir, '.launcher');
-		const versionCache = path.join(cacheDir, 'version-cache.json');
-		const fileCache = path.join(cacheDir, 'file-cache.json');
+		await fs.ensureDir(path.join(clientDir, '.launcher'));
 
-		try {
-			this.#versionCache = (await fs.pathExists(versionCache))
-				? await fs.readJSON(versionCache)
-				: {};
-		} catch (error) {
-			console.error(error);
-			this.#versionCache = {};
-		}
+                const versionCache = path.join(clientDir, '.launcher', 'update-cache.json');
+                this.#versionCache = (await fs.exists(versionCache))
+                        ? await fs.readJSON(versionCache)
+                        : {};
+                this.#pendingInvalidations.clear();
 
-		try {
-			this.#fileCache = (await fs.pathExists(fileCache))
-				? await fs.readJSON(fileCache)
-				: {};
-		} catch (error) {
-			console.error(error);
-			this.#fileCache = {};
-		}
+		const fileCache = path.join(clientDir, '.launcher', 'file-cache.json');
+		this.#fileCache = (await fs.exists(fileCache))
+			? await fs.readJSON(fileCache)
+			: {};
 	};
 
 	#saveCache = async (clientDir: string) => {
-		const cacheDir = path.join(clientDir, '.launcher');
-		const versionCache = path.join(cacheDir, 'version-cache.json');
-		const fileCache = path.join(cacheDir, 'file-cache.json');
+		await fs.ensureDir(path.join(clientDir, '.launcher'));
 
-		await fs.ensureDir(cacheDir);
+		const versionCache = path.join(clientDir, '.launcher', 'update-cache.json');
 		await fs.writeJSON(versionCache, this.#versionCache, { spaces: 2 });
+
+		const fileCache = path.join(clientDir, '.launcher', 'file-cache.json');
 		await fs.writeJSON(fileCache, this.#fileCache, { spaces: 2 });
 	};
 
-	async #cleanupTempDownloads() {
-		try {
-			if (!(await fs.pathExists(Preferences.userDataDir))) return;
-			const tempFolder = path.join(
-				Preferences.userDataDir,
-				'downloads'
-			);
-			await fs.remove(tempFolder);
-		} catch (e) {
-			Logger.log('Failed to clean up temp downloads', 'error', e);
-		}
-	}
-
-	constructor() {
-		super({ state: 'idle' });
-
-		this.observe(status => {
-			if (status.state === 'failed') {
-				Logger.log(
-					`Updater error: ${status.message ?? 'unknown error'}`,
-					'error'
-				);
-			}
-		});
-	}
+	protected _value: UpdaterStatus = { state: 'needsValidation' };
 
 	get status() {
 		return this._value;
@@ -279,35 +339,33 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 	private set status(v: UpdaterStatus) {
 		this._value = v;
 		this._notifyObservers(v);
-
 		if (this.status.state === 'failed') {
 			mainWindow?.setProgressBar(1, { mode: 'error' });
 		} else if (this.status.progress === 1) {
 			mainWindow?.setProgressBar(0);
 		} else {
 			mainWindow?.setProgressBar(this.status.progress ?? 0, {
-				mode: this.status.state === 'updating' ? 'normal' : 'indeterminate'
+				mode: this.status.progress === -1 ? 'indeterminate' : 'normal'
 			});
 		}
 	}
 
-	async invalidate() {
-		this.#pendingInvalidations.clear();
-
-		if (this.status.state === 'failed') {
-			this.status = { state: 'idle' };
-		}
+	invalidate() {
+		this.status = { state: 'needsValidation' };
 	}
 
-	async verify() {
-		const {
-			clientDir,
-			optionalPatches,
-			selectedRealm,
-			isPortable
-		} = Preferences.data;
-		const realmKey = selectedRealm ?? 'legionnaire_plus';
+        async updateLauncher() {
+                Logger.log('Launcher updates are currently disabled.');
+                this.status = {
+                        state: 'failed',
+                        message: 'Launcher updates are currently disabled. Please download the latest release manually.'
+                };
+        }
 
+	async verify() {
+		const { clientDir, optionalPatches, selectedRealm, isPortable } =
+		Preferences.data;
+		const realmKey = selectedRealm ?? 'legionnaire_plus';
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -320,19 +378,15 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				return;
 			}
 
-			if (isPortable) {
-				try {
-					await fs.remove(path.join(clientDir, 'update.bat'));
-				} catch (error) {
-					console.error(error);
-				}
-			}
+                        if (isPortable) {
+                                await fs.remove(path.join(clientDir, 'update-script.bat'));
+                        }
 
 			if (os.platform() === 'win32' && clientDir.length > 220) {
 				this.status = {
 					state: 'failed',
 					message:
-						'Path to current install location is too long and may cause issues. Please move it to a shorter path.'
+						'Path to current install location is too long and may cause issues.'
 				};
 				return;
 			}
@@ -340,316 +394,294 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			if (await isGameRunning()) {
 				this.status = {
 					state: 'failed',
-					message: 'Please close WoW before updating.'
+					message: 'Please close WoW first, before updating.'
 				};
 				return;
 			}
 
-			Logger.log(`Verifying client files at "${clientDir}"...`);
+			Logger.log(`Verifying client files at ${path.join(clientDir)}...`);
+                        this.status = {
+                                state: 'verifying',
+                                progress: 0,
+                                message: 'Looking for updates...'
+                        };
 
-			this.status = {
-				state: 'verifying',
-				progress: 0,
-				message: 'Looking for updates...'
-			};
+                        await this.#loadCache(clientDir);
+                        let toDownload = 0;
 
-			await this.#loadCache(clientDir);
+                        const verificationEntries = Object.entries(FileMap);
+                        const totalVerificationEntries = verificationEntries.length;
+                        let processedVerificationEntries = 0;
 
-			let toDownload = 0;
+                        for (const [name, meta] of verificationEntries) {
+                                processedVerificationEntries += 1;
+                                const verificationProgress =
+                                        totalVerificationEntries === 0
+                                                ? -1
+                                                : processedVerificationEntries / totalVerificationEntries;
+                                const displayName = meta.label ?? name;
+                                this.status = {
+                                        state: 'verifying',
+                                        progress: verificationProgress,
+                                        message: `Looking for updates... (${displayName})`
+                                };
 
-			const verificationEntries = Object.entries(FileMap);
-			const totalVerificationEntries = verificationEntries.length;
-			let processedVerificationEntries = 0;
+                                const version = await fetchVersion(`${name}.version`);
 
-			for (const [name, meta] of verificationEntries) {
-				processedVerificationEntries += 1;
-				const verificationProgress =
-					totalVerificationEntries === 0
-						? -1
-						: processedVerificationEntries / totalVerificationEntries;
-				const displayName = meta.label ?? name;
-				this.status = {
-					state: 'verifying',
-					progress: verificationProgress,
-					message: `Looking for updates... (${displayName})`
-				};
+                                const shouldCache = !!meta.optional || !!meta.realms;
+                                const cachePath = shouldCache
+                                        ? path.join(
+                                                  clientDir,
+                                                  '.launcher',
+                                                  'cached',
+                                                  name,
+                                                  version
+                                          )
+                                        : undefined;
 
-				const shouldCache = !!meta.optional || !!meta.realms;
+                                const isOptionalEnabled =
+                                        !meta.optional || optionalPatches.includes(name);
+                                const isRealmEnabled =
+                                        !meta.realms || meta.realms.includes(realmKey);
+                                const shouldUse = isOptionalEnabled && isRealmEnabled;
 
-				const isOptionalEnabled =
-					!meta.optional || optionalPatches.includes(name);
-				const isRealmEnabled =
-					!meta.realms || meta.realms.includes(realmKey);
-				const shouldUse = isOptionalEnabled && isRealmEnabled;
+                                if (!shouldUse) {
+                                        if (shouldCache && this.#versionCache[name]) {
+                                                // Move files to cache without nuking an existing copy when there's
+                                                // nothing new to move. This prevents losing cached data for realms
+                                                // that remain disabled across multiple verification runs.
+                                                const filesToMove = await Promise.all(
+                                                        (this.#fileCache[name] ?? []).map(async file => {
+                                                                const source = path.join(
+                                                                        clientDir,
+                                                                        meta.extractPath,
+                                                                        file
+                                                                );
+                                                                return {
+                                                                        file,
+                                                                        source,
+                                                                        exists: await fs.pathExists(source)
+                                                                };
+                                                        })
+                                                );
 
-				// 🔹 Optimization: if this patch isn't used for the current realm/optional settings,
-				// skip hitting the network and the heavy disk work. Optionally move files into cache.
-				if (!shouldUse) {
-					if (shouldCache && this.#versionCache[name]) {
-						const cacheVersion = this.#versionCache[name];
-						const cachePath = path.join(
-							clientDir,
-							'.launcher',
-							'cached',
-							name,
-							cacheVersion
-						);
+                                                const existingSources = filesToMove.filter(({ exists }) => exists);
 
-						// Move files to cache without nuking an existing copy when there's
-						// nothing new to move. This prevents losing cached data for realms
-						// that remain disabled across multiple verification runs.
-						const filesToMove = await Promise.all(
-							(this.#fileCache[name] ?? []).map(async file => {
-								const source = path.join(
-									clientDir,
-									meta.extractPath,
-									file
-								);
-								return {
-									file,
-									source,
-									exists: await fs.pathExists(source)
-								};
-							})
-						);
+                                                if (existingSources.length !== 0) {
+                                                        await fs.ensureDir(path.join(clientDir, '.launcher', 'cached'));
+                                                        await fs.remove(cachePath!);
+                                                        await fs.ensureDir(cachePath!);
 
-						const existingSources = filesToMove.filter(
-							({ exists }) => exists
-						);
+                                                        for (const { file, source } of existingSources) {
+                                                                try {
+                                                                        const destination = path.join(cachePath!, file);
+                                                                        await fs.ensureDir(path.dirname(destination));
+                                                                        await fs.move(source, destination, {
+                                                                                overwrite: true
+                                                                        });
+                                                                } catch (_error) {
+                                                                        console.error(_error);
+                                                                }
+                                                        }
+                                                }
+                                        }
+                                        this.#pendingInvalidations.delete(name);
+                                        continue;
+                                }
 
-						if (existingSources.length !== 0) {
-							await fs.ensureDir(
-								path.join(clientDir, '.launcher', 'cached')
-							);
-							await fs.remove(cachePath);
-							await fs.ensureDir(cachePath);
+                                let expectedFiles = this.#fileCache[name];
+                                if (!expectedFiles) {
+                                        expectedFiles = [];
+                                        this.#fileCache[name] = expectedFiles;
+                                }
 
-							for (const { file, source } of existingSources) {
-								try {
-									const destination = path.join(
-										cachePath,
-										file
-									);
-									await fs.ensureDir(
-										path.dirname(destination)
-									);
-									await fs.move(source, destination, {
-										overwrite: true
-									});
-								} catch (_error) {
-									console.error(_error);
-								}
-							}
-						}
-					}
-					this.#pendingInvalidations.delete(name);
-					continue;
-				}
+                                const hasAllFiles = async () => {
+                                        if (expectedFiles.length === 0) {
+                                                try {
+                                                        const entries = await fs.readdir(
+                                                                path.join(clientDir, meta.extractPath)
+                                                        );
+                                                        const inferredFiles = entries.filter(entry =>
+                                                                entry
+                                                                        .toLowerCase()
+                                                                        .startsWith(name.toLowerCase())
+                                                        );
 
-				const version = await fetchVersion(`${name}.version`);
+                                                        if (inferredFiles.length !== 0) {
+                                                                expectedFiles.splice(
+                                                                        0,
+                                                                        expectedFiles.length,
+                                                                        ...inferredFiles
+                                                                );
+                                                                this.#fileCache[name] = expectedFiles;
+                                                        }
+                                                } catch (_error) {
+                                                        // If the directory doesn't exist yet we fall back to the
+                                                        // standard download path below.
+                                                }
 
-				const cachePath = shouldCache
-					? path.join(
-							clientDir,
-							'.launcher',
-							'cached',
-							name,
-							version
-					  )
-					: undefined;
+                                                if (expectedFiles.length === 0) {
+                                                        return false;
+                                                }
+                                        }
+                                        for (const file of expectedFiles) {
+                                                const destination = path.join(
+                                                        clientDir,
+                                                        meta.extractPath,
+                                                        file
+                                                );
+                                                if (!(await fs.pathExists(destination))) {
+                                                        return false;
+                                                }
+                                        }
+                                        return true;
+                                };
 
-				let expectedFiles = this.#fileCache[name];
-				if (!expectedFiles) {
-					expectedFiles = [];
-					this.#fileCache[name] = expectedFiles;
-				}
+                                const restoreFromCache = async () => {
+                                        if (!shouldCache || !cachePath || !(await fs.exists(cachePath))) {
+                                                return false;
+                                        }
 
-				const hasAllFiles = async () => {
-					if (expectedFiles.length === 0) {
-						try {
-							const entries = await fs.readdir(
-								path.join(clientDir, meta.extractPath)
-							);
-							const inferredFiles = entries.filter(entry =>
-								entry
-									.toLowerCase()
-									.startsWith(name.toLowerCase())
-							);
+                                        const collectCacheFiles = async (dir: string) => {
+                                                const entries = await fs.readdir(dir);
+                                                const files: string[] = [];
+                                                for (const entry of entries) {
+                                                        const entryPath = path.join(dir, entry);
+                                                        const stats = await fs.stat(entryPath);
+                                                        if (stats.isDirectory()) {
+                                                                files.push(
+                                                                        ...(await collectCacheFiles(entryPath))
+                                                                );
+                                                        } else {
+                                                                files.push(
+                                                                        path
+                                                                                .relative(cachePath, entryPath)
+                                                                                .replace(/\\/g, '/')
+                                                                );
+                                                        }
+                                                }
+                                                return files;
+                                        };
 
-							if (inferredFiles.length !== 0) {
-								expectedFiles.splice(
-									0,
-									expectedFiles.length,
-									...inferredFiles
-								);
-								this.#fileCache[name] = expectedFiles;
-							}
-						} catch (_error) {
-							// If the directory doesn't exist yet we fall back to the
-							// standard download path below.
-						}
-					}
+                                        const filesToRestore =
+                                                expectedFiles.length !== 0
+                                                        ? expectedFiles
+                                                        : await collectCacheFiles(cachePath);
 
-					for (const file of expectedFiles) {
-						const destination = path.join(
-							clientDir,
-							meta.extractPath,
-							file
-						);
-						if (!(await fs.pathExists(destination))) {
-							return false;
-						}
-					}
+                                        if (filesToRestore.length === 0) return false;
 
-					return true;
-				};
+                                        let movedAny = false;
+                                        for (const file of filesToRestore) {
+                                                const source = path.join(cachePath, file);
+                                                if (!(await fs.pathExists(source))) continue;
+                                                const destination = path.join(
+                                                        clientDir,
+                                                        meta.extractPath,
+                                                        file
+                                                );
+                                                try {
+                                                        await fs.ensureDir(path.dirname(destination));
+                                                        await fs.copy(source, destination, { overwrite: true });
+                                                        movedAny = true;
+                                                } catch (e) {
+                                                        console.error(e);
+                                                }
+                                        }
 
-				const restoreFromCache = async () => {
-					if (!shouldCache || !cachePath) {
-						return false;
-					}
+                                        if (!movedAny) return false;
 
-					if (!(await fs.pathExists(cachePath))) {
-						return false;
-					}
+                                        const uniqueFiles = Array.from(
+                                                new Set([...expectedFiles, ...filesToRestore])
+                                        );
+                                        expectedFiles.splice(0, expectedFiles.length, ...uniqueFiles);
+                                        this.#fileCache[name] = expectedFiles;
 
-					const filesToRestore =
-						expectedFiles.length !== 0
-							? expectedFiles
-							: await (async () => {
-									const entries = await fs.readdir(cachePath);
-									const files: string[] = [];
-									for (const entry of entries) {
-										const entryPath = path.join(
-											cachePath,
-											entry
-										);
-										const stats = await fs.stat(entryPath);
-										if (stats.isDirectory()) continue;
-										files.push(entry);
-									}
-									return files;
-							  })();
+                                        if (!(await hasAllFiles())) {
+                                                return false;
+                                        }
 
-					if (filesToRestore.length === 0) return false;
+                                        this.#versionCache[name] = version;
+                                        this.#pendingInvalidations.delete(name);
+                                        return true;
+                                };
 
-					let movedAny = false;
-					for (const file of filesToRestore) {
-						const source = path.join(cachePath, file);
-						if (!(await fs.pathExists(source))) continue;
+                                let needsDownload = false;
+                                let downloadReason: 'missing' | 'update' | 'metadata' = 'update';
 
-						const destination = path.join(
-							clientDir,
-							meta.extractPath,
-							file
-						);
+                                const cachedVersion = this.#versionCache[name];
 
-						try {
-							await fs.ensureDir(path.dirname(destination));
-							await fs.copy(source, destination, {
-								overwrite: true
-							});
-							movedAny = true;
-						} catch (error) {
-							console.error(error);
-						}
-					}
+                                if (cachedVersion === version) {
+                                        if (await hasAllFiles()) {
+                                                this.#pendingInvalidations.delete(name);
+                                                continue;
+                                        }
 
-					if (!movedAny) return false;
+                                        if (await restoreFromCache()) {
+                                                this.#pendingInvalidations.delete(name);
+                                                continue;
+                                        }
 
-					const uniqueFiles = Array.from(
-						new Set([...expectedFiles, ...filesToRestore])
-					);
-					expectedFiles.splice(
-						0,
-						expectedFiles.length,
-						...uniqueFiles
-					);
-					this.#fileCache[name] = expectedFiles;
+                                        Logger.log(
+                                                `Missing files detected for ${name}. Scheduling download to restore them.`
+                                        );
+                                        this.#pendingInvalidations.add(name);
+                                        needsDownload = true;
+                                        downloadReason = 'missing';
+                                } else if (!cachedVersion) {
+                                        Logger.log(
+                                                `No version metadata found for ${name}. Scheduling download to rebuild the cache.`
+                                        );
+                                        this.#pendingInvalidations.add(name);
+                                        needsDownload = true;
+                                        downloadReason = 'metadata';
+                                } else {
+                                        if (await restoreFromCache()) {
+                                                this.#pendingInvalidations.delete(name);
+                                                continue;
+                                        }
+                                        this.#pendingInvalidations.add(name);
+                                        needsDownload = true;
+                                        downloadReason = 'update';
+                                }
 
-					if (!(await hasAllFiles())) {
-						return false;
-					}
+                                if (!needsDownload) continue;
 
-					this.#versionCache[name] = version;
-					this.#pendingInvalidations.delete(name);
-					return true;
-				};
+                                if (shouldCache && cachePath) {
+                                        await fs.remove(path.dirname(cachePath));
+                                }
 
-				let needsDownload = false;
-				let downloadReason: 'missing' | 'update' | 'metadata' = 'update';
+                                if (downloadReason === 'update') {
+                                        Logger.log(`New ${name} version available: ${version}`);
+                                } else if (downloadReason === 'missing') {
+                                        Logger.log(`Re-downloading ${name} files to replace missing data.`);
+                                } else {
+                                        Logger.log(
+                                                `Re-downloading ${name} to restore missing version metadata in the cache.`
+                                        );
+                                }
 
-				const cachedVersion = this.#versionCache[name];
+                                toDownload += await fetchSize(`${name}.zip`);
+                        }
 
-				if (cachedVersion === version) {
-					if (await hasAllFiles()) {
-						this.#pendingInvalidations.delete(name);
-						continue;
-					}
-
-					if (await restoreFromCache()) {
-						this.#pendingInvalidations.delete(name);
-						continue;
-					}
-
-					Logger.log(
-						`Cached version matches but files are missing for "${name}", marking for metadata re-download`
-					);
-					this.#pendingInvalidations.add(name);
-					needsDownload = true;
-					downloadReason = 'metadata';
-				} else {
-					if (await restoreFromCache()) {
-						this.#pendingInvalidations.delete(name);
-						continue;
-					}
-					this.#pendingInvalidations.add(name);
-					needsDownload = true;
-					downloadReason = 'update';
-				}
-
-				if (!needsDownload) continue;
-
-				if (shouldCache && cachePath) {
-					await fs.remove(path.dirname(cachePath));
-					await fs.ensureDir(cachePath);
-				}
-
-				for (const file of meta.files ?? []) {
-					const platformStrings = getPlatformStrings();
-					const platform =
-						platformStrings[
-							os.platform() as keyof typeof platformStrings
-						];
-					if (
-						file.platform &&
-						file.platform !== platform &&
-						file.skipWhenPlatformNotMatched !== false
-					) {
-						continue;
-					}
-
-					if (downloadReason === 'metadata') {
-						toDownload += file.size ?? 0;
-						continue;
-					}
-
-					if (downloadReason === 'update') {
-						toDownload +=
-							(file.extractSize ?? file.size ?? 0) +
-							(file.size ?? 0);
-					}
-				}
-			}
+			await this.#saveCache(clientDir);
 
 			if (toDownload !== 0) {
-				this.status = {
-					state: 'updateAvailable',
-					message: formatFileSize(toDownload)
-				};
-			} else {
-				this.status = { state: 'upToDate', progress: 1 };
+				const availableSpace = await getAvailableDiskSpace(clientDir);
+				if (toDownload > availableSpace) {
+					this.status = {
+						state: 'failed',
+						message: `Not enough disk space. Required: ${formatFileSize(
+							toDownload
+						)}, Available: ${formatFileSize(availableSpace)}`
+					};
+					return;
+				}
 			}
+
+			this.status =
+				toDownload !== 0
+					? { state: 'updateAvailable', message: formatFileSize(toDownload) }
+					: { state: 'upToDate', progress: 1 };
 		} catch (e) {
 			const message =
 				e instanceof Error ? e.message : 'Unexpected error occurred';
@@ -658,20 +690,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 		}
 	}
 
-	async update(force?: boolean) {
-		const {
-			clientDir,
-			selectedRealm,
-			optionalPatches,
-			isPortable
-		} = Preferences.data;
+        async update(force?: boolean) {
+                const { clientDir, optionalPatches, selectedRealm } = Preferences.data;
 		const realmKey = selectedRealm ?? 'legionnaire_plus';
-
-		if (!clientDir || !(await Preferences.isValidClientDir(clientDir))) {
-			this.status = { state: 'noClient' };
-			return;
-		}
-
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -679,289 +700,305 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			)
 				return;
 
+			if (!clientDir || !(await Preferences.isValidClientDir(clientDir))) {
+				this.status = { state: 'noClient' };
+				return;
+			}
+
 			if (await isGameRunning()) {
 				this.status = {
 					state: 'failed',
-					message: 'Please close WoW before updating.'
+					message: 'Please close WoW first, before updating.'
 				};
 				return;
 			}
 
-			this.status = {
-				state: 'updating',
-				progress: 0,
-				message: 'Initializing...'
-			};
-
-			await this.#loadCache(clientDir);
-
-			const installerDir = path.join(clientDir, '.launcher');
-			await fs.ensureDir(installerDir);
-
-			const cacheDir = path.join(installerDir, 'cached');
-
-			const versionInfoJson = await fetchVersion('version.json');
-			let versionInfo: {
-				version: string;
-				minVersion?: string;
-			};
-			try {
-				versionInfo = JSON.parse(versionInfoJson);
-			} catch (error) {
-				Logger.log(
-					'Failed to parse version.json from update server',
-					'error',
-					error
-				);
-				this.status = {
-					state: 'failed',
-					message:
-						'Failed to parse version data from update server. Please try again later.'
-				};
-				return;
+			if (force) {
+				await fs.remove(path.join(Preferences.userDataDir, 'downloads'));
 			}
 
-			const latestVersion = versionInfo.version;
-			const currentVersion = Preferences.launcherVersion;
-
-			const platformStrings = getPlatformStrings();
-			const platform =
-				platformStrings[
-					os.platform() as keyof typeof platformStrings
-				];
-
+			Logger.log(`Updating client files at ${path.join(clientDir)}...`);
 			this.status = {
 				state: 'updating',
-				progress: 0,
-				message: `Downloading update...`
+				progress: -1,
+				message: 'Preparing files...'
 			};
 
-			Logger.log('Downloading updater content...');
+                        for (const [name, meta] of Object.entries(FileMap)) {
+                                const isOptionalEnabled =
+                                        !meta.optional || optionalPatches.includes(name);
+                                const isRealmEnabled =
+                                        !meta.realms || meta.realms.includes(realmKey);
+                                const shouldUse = isOptionalEnabled && isRealmEnabled;
+                                const shouldCache = !!meta.optional || !!meta.realms;
 
-			const verificationEntries = Object.entries(FileMap);
+                                if (!shouldUse) {
+                                        if (force) {
+                                                delete this.#versionCache[name];
+                                        }
+                                        this.#pendingInvalidations.delete(name);
+                                        continue;
+                                }
 
-			for (const [name, meta] of verificationEntries) {
-				const displayName = meta.label ?? name;
+                                if (this.#versionCache[name] && !force && !this.#pendingInvalidations.has(name))
+                                        continue;
 
-				const isOptionalEnabled =
-					!meta.optional || optionalPatches.includes(name);
-				const isRealmEnabled =
-					!meta.realms || meta.realms.includes(realmKey);
-
-				const shouldUse = isOptionalEnabled && isRealmEnabled;
-				const shouldCache = !!meta.optional || !!meta.realms;
-
-				if (!shouldUse && !shouldCache) continue;
-
-				const version = await fetchVersion(`${name}.version`);
-
-				if (
-					this.#versionCache[name] &&
-					!force &&
-					!this.#pendingInvalidations.has(name)
-				)
-					continue;
-
-				if (this.status?.state !== 'updating') return;
+				Logger.log(`Downloading ${name} files...`);
+				const file = await fetchFile(`${name}.zip`, (p: FetchProgress) => {
+					const progress =
+						(p.done + p.initialPartial) / (p.total + p.initialPartial);
+					const percent = Math.round(progress * 100);
+					const elapsed = (Date.now() - p.startedAt) / 1000;
+					const rate = p.done / elapsed;
+					const eta = formatDuration(p.total / rate - elapsed);
+					this.status = {
+						state: 'updating',
+						progress,
+						message: `Downloading ${name}... ${percent}% (${eta} remaining)`
+					};
+				});
 
 				this.status = {
 					state: 'updating',
-					message: `Downloading ${displayName}...`
+					progress: -1,
+					message: `Extracting ${name}...`
 				};
+                                const extractedFiles = await extractArchiveWithRetry(
+                                        name,
+                                        file,
+                                        path.join(clientDir, meta.extractPath),
+                                        (progress, percent) => {
+                                                if (progress === null) {
+                                                        this.status = {
+                                                                state: 'updating',
+                                                                progress: -1,
+                                                                message: `Extracting ${name}...`
+                                                        };
+                                                        return;
+                                                }
 
-				const files = meta.files ?? [];
+                                                this.status = {
+                                                        state: 'updating',
+                                                        progress,
+                                                        message: `Extracting ${name}... ${percent}%`
+                                                };
+                                        }
+                                );
 
-				const totalSize = files.reduce(
-					(sum, file) =>
-						sum +
-						(file.platform && file.platform !== platform
-							? 0
-							: file.size ?? 0),
-					0
-				);
+                                this.#fileCache[name] = extractedFiles;
 
-				let downloaded = 0;
+                                const version = await fetchVersion(`${name}.version`);
+                                this.#versionCache[name] = version;
+                                this.#pendingInvalidations.delete(name);
 
-				await fs.ensureDir(clientDir);
+                                if (shouldCache) {
+                                        await this.#cachePatchFiles(
+                                                clientDir,
+                                                name,
+                                                version,
+                                                meta.extractPath,
+                                                extractedFiles
+                                        );
+                                }
 
-				const cachePath = path.join(cacheDir, name, version);
-
-				if (
-					shouldCache &&
-					(await fs.pathExists(cachePath)) &&
-					!(await fs.readdir(cachePath)).length
-				) {
-					await fs.remove(path.dirname(cachePath));
-				}
-
-				const expectedFiles = this.#fileCache[name] || [];
-				const extractedFiles: string[] = [];
-
-				for (const file of files) {
-					if (file.platform && file.platform !== platform) {
-						continue;
-					}
-
-					const { extractPath = '', extractPrefix = '' } = file;
-
-					const startedAt = Date.now();
-
-					const downloadedFile = await fetchFile(
-						file.download,
-						file.progress === false
-							? undefined
-							: ({ done, total, initialPartial }) => {
-									if (total === 0 && initialPartial === 0)
-										return;
-
-									const overallDone =
-										downloaded + done + initialPartial;
-									const overallTotal =
-										totalSize + initialPartial;
-
-									const progress =
-										overallTotal > 0
-											? overallDone / overallTotal
-											: 0;
-
-									const elapsed =
-										(Date.now() - startedAt) / 1000;
-									const rate =
-										elapsed > 0
-											? overallDone / elapsed
-											: 0;
-									const eta =
-										rate > 0
-											? formatDuration(
-													(totalSize -
-														overallDone) /
-														rate
-											  )
-											: 'calculating...';
-
-									this.status = {
-										state: 'updating',
-										progress,
-										message: `Downloading ${displayName}... (${Math.round(
-											progress * 100
-										)}%, ${eta} remaining)`
-									};
-							  },
-						force ?? false
-					);
-
-					let zip: yauzl.Zip | undefined;
-
-					try {
-						zip = await yauzl.open(downloadedFile);
-					} catch (err) {
-						if (isCorruptZipLocalHeaderError(err)) {
-							Logger.log(
-								`Downloaded zip "${file.download}" appears to be corrupt. Retrying once...`,
-								'error',
-								err
-							);
-							// Retry once with force=true
-							const retryFile = await fetchFile(
-								file.download,
-								undefined,
-								true
-							);
-							zip = await yauzl.open(retryFile);
-							await fs.remove(retryFile);
-						} else {
-							throw err;
-						}
-					}
-
-					for await (const entry of zip!) {
-						if (entry.fileName.endsWith('/')) continue;
-
-						const outputPath = path.join(
-							clientDir,
-							extractPath,
-							extractPrefix,
-							entry.fileName.replace(/^\.\//, '')
-						);
-						const directory = path.dirname(outputPath);
-
-						await fs.ensureDir(directory);
-
-						const readStream = await entry.openReadStream();
-						const writeStream = fs.createWriteStream(outputPath);
-
-						await new Promise<void>((resolve, reject) => {
-							readStream.pipe(writeStream);
-							writeStream.on('finish', resolve);
-							writeStream.on('error', reject);
-						});
-
-						extractedFiles.push(
-							path.relative(
-								path.join(clientDir, extractPath),
-								outputPath
-							)
-						);
-					}
-
-					await zip!.close();
-					await fs.remove(downloadedFile);
-
-					downloaded += file.size ?? 0;
-				}
-
-				this.#fileCache[name] = extractedFiles;
-				this.#versionCache[name] = version;
-				this.#pendingInvalidations.delete(name);
-
-				if (shouldCache) {
-					await this.#cachePatchFiles(
-						clientDir,
-						name,
-						version,
-						FileMap[name].extractPath,
-						extractedFiles
-					);
-				}
+                                await this.#saveCache(clientDir);
 			}
 
-			await this.#saveCache(clientDir);
-
-			if (isPortable) {
-				const updateScriptPath = path.join(clientDir, 'update.bat');
-				const updateScriptContent = [
-					'@echo off',
-					'echo Applying Centurion Launcher update...',
-					'cd /d "%~dp0"',
-					'start "" "CenturionLauncher.exe"',
-					'del "%~f0"'
-				].join('\r\n');
-
-				await fs.writeFile(updateScriptPath, updateScriptContent);
-
-				this.status = {
-					state: 'pendingRestart',
-					message:
-						'Update ready. Please close the launcher to apply the update.'
-				};
-			} else {
-				this.status = { state: 'upToDate', progress: 1 };
-			}
-
-			const directorsMessage = getDirectorsMessage(realmKey);
-
-			Logger.log(
-				`Client successfully updated to latest version. Director's Note: ${directorsMessage}`
-			);
+			this.status = { state: 'upToDate', progress: 1 };
 		} catch (e) {
 			const message =
 				e instanceof Error ? e.message : 'Unexpected error occurred';
 			Logger.log(`Update failed: ${message}`, 'error', e);
-			this.status = { state: 'failed', message };
-		} finally {
-			await this.#cleanupTempDownloads();
-		}
-	}
+                        this.status = { state: 'failed', message };
+                }
+        }
+
+        async ensureRealmPatchesFor(realmKey: RealmId) {
+                const { clientDir } = Preferences.data;
+                if (!clientDir) return;
+
+                await this.#loadCache(clientDir);
+
+                let cacheModified = false;
+
+                for (const [name, meta] of Object.entries(FileMap)) {
+                        if (!meta.realms) continue;
+
+                        const shouldUse = meta.realms.includes(realmKey);
+                        if (!shouldUse) continue;
+
+                        const shouldCache = !!meta.optional || !!meta.realms;
+                        const cacheRoot = path.join(clientDir, '.launcher', 'cached', name);
+                        const cachedVersion = this.#versionCache[name];
+                        const cachePath =
+                                shouldCache && cachedVersion
+                                        ? path.join(cacheRoot, cachedVersion)
+                                        : undefined;
+
+                        let expectedFiles = this.#fileCache[name];
+                        if (!expectedFiles) {
+                                expectedFiles = [];
+                                this.#fileCache[name] = expectedFiles;
+                                cacheModified = true;
+                        }
+
+                        const hasAllFiles = async () => {
+                                if (expectedFiles.length === 0) {
+                                        try {
+                                                const entries = await fs.readdir(
+                                                        path.join(clientDir, meta.extractPath)
+                                                );
+                                                const inferredFiles = entries.filter(entry =>
+                                                        entry.toLowerCase().startsWith(name.toLowerCase())
+                                                );
+
+                                                if (inferredFiles.length !== 0) {
+                                                        expectedFiles.splice(
+                                                                0,
+                                                                expectedFiles.length,
+                                                                ...inferredFiles
+                                                        );
+                                                        this.#fileCache[name] = expectedFiles;
+                                                        cacheModified = true;
+                                                }
+                                        } catch (_error) {
+                                                // ignore
+                                        }
+
+                                        if (expectedFiles.length === 0) {
+                                                return false;
+                                        }
+                                }
+
+                                for (const file of expectedFiles) {
+                                        const destination = path.join(
+                                                clientDir,
+                                                meta.extractPath,
+                                                file
+                                        );
+                                        if (!(await fs.pathExists(destination))) {
+                                                return false;
+                                        }
+                                }
+                                return true;
+                        };
+
+                        const restoreFromCache = async () => {
+                                if (!shouldCache || !cachePath || !(await fs.exists(cachePath))) {
+                                        return false;
+                                }
+
+                                const collectCacheFiles = async (dir: string) => {
+                                        const entries = await fs.readdir(dir);
+                                        const files: string[] = [];
+                                        for (const entry of entries) {
+                                                const entryPath = path.join(dir, entry);
+                                                const stats = await fs.stat(entryPath);
+                                                if (stats.isDirectory()) {
+                                                        files.push(...(await collectCacheFiles(entryPath)));
+                                                } else {
+                                                        files.push(
+                                                                path
+                                                                        .relative(cachePath, entryPath)
+                                                                        .replace(/\\/g, '/')
+                                                        );
+                                                }
+                                        }
+                                        return files;
+                                };
+
+                                const filesToRestore =
+                                        expectedFiles.length !== 0
+                                                ? expectedFiles
+                                                : await collectCacheFiles(cachePath);
+
+                                if (filesToRestore.length === 0) return false;
+
+                                let movedAny = false;
+                                for (const file of filesToRestore) {
+                                        const source = path.join(cachePath, file);
+                                        if (!(await fs.pathExists(source))) continue;
+
+                                        const destination = path.join(
+                                                clientDir,
+                                                meta.extractPath,
+                                                file
+                                        );
+
+                                        try {
+                                                await fs.ensureDir(path.dirname(destination));
+                                                await fs.copy(source, destination, { overwrite: true });
+                                                movedAny = true;
+                                        } catch (error) {
+                                                Logger.log(
+                                                        `Failed to restore ${file} from cache for ${name}`,
+                                                        'error',
+                                                        error
+                                                );
+                                        }
+                                }
+
+                                if (!movedAny) return false;
+
+                                const uniqueFiles = Array.from(
+                                        new Set([...expectedFiles, ...filesToRestore])
+                                );
+                                expectedFiles.splice(0, expectedFiles.length, ...uniqueFiles);
+                                this.#fileCache[name] = expectedFiles;
+                                cacheModified = true;
+
+                                if (!(await hasAllFiles())) {
+                                        return false;
+                                }
+
+                                if (!this.#versionCache[name] && cachedVersion) {
+                                        this.#versionCache[name] = cachedVersion;
+                                        cacheModified = true;
+                                }
+
+                                return true;
+                        };
+
+                        if (await hasAllFiles()) {
+                                continue;
+                        }
+
+                        if (await restoreFromCache()) {
+                                continue;
+                        }
+
+                        Logger.log(
+                                `Missing ${name} files for ${realmKey}. Downloading to restore realm patches...`
+                        );
+                        const file = await fetchFile(`${name}.zip`);
+                        const extractedFiles = await extractArchiveWithRetry(
+                                name,
+                                file,
+                                path.join(clientDir, meta.extractPath)
+                        );
+
+                        this.#fileCache[name] = extractedFiles;
+
+                        const version = await fetchVersion(`${name}.version`);
+                        this.#versionCache[name] = version;
+
+                        if (shouldCache) {
+                                await this.#cachePatchFiles(
+                                        clientDir,
+                                        name,
+                                        version,
+                                        meta.extractPath,
+                                        extractedFiles
+                                );
+                        }
+
+                        cacheModified = true;
+                }
+
+                if (cacheModified) {
+                        await this.#saveCache(clientDir);
+                }
+        }
 }
 
 const Updater = new UpdaterClass();
