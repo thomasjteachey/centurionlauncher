@@ -614,8 +614,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 let needsDownload = false;
                                 let downloadReason: 'missing' | 'update' | 'metadata' = 'update';
 
-                                const cachedVersion = this.#versionCache[name];
-
                                 if (cachedVersion === version) {
                                         if (await hasAllFiles()) {
                                                 this.#pendingInvalidations.delete(name);
