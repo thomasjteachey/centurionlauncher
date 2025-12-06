@@ -426,18 +426,21 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         message: `Looking for updates... (${displayName})`
                                 };
 
-                                const version = await fetchVersion(`${name}.version`);
-
                                 const shouldCache = !!meta.optional || !!meta.realms;
-                                const cachePath = shouldCache
-                                        ? path.join(
-                                                  clientDir,
-                                                  '.launcher',
-                                                  'cached',
-                                                  name,
-                                                  version
-                                          )
-                                        : undefined;
+                                const cachedVersion = this.#versionCache[name];
+
+                                let version = cachedVersion;
+                                const getCachePath = () =>
+                                        shouldCache && version
+                                                ? path.join(
+                                                          clientDir,
+                                                          '.launcher',
+                                                          'cached',
+                                                          name,
+                                                          version
+                                                  )
+                                                : undefined;
+                                let cachePath = getCachePath();
 
                                 const isOptionalEnabled =
                                         !meta.optional || optionalPatches.includes(name);
@@ -446,7 +449,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                 const shouldUse = isOptionalEnabled && isRealmEnabled;
 
                                 if (!shouldUse) {
-                                        if (shouldCache && this.#versionCache[name]) {
+                                        if (shouldCache && cachePath) {
                                                 // Move files to cache without nuking an existing copy when there's
                                                 // nothing new to move. This prevents losing cached data for realms
                                                 // that remain disabled across multiple verification runs.
@@ -467,17 +470,17 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                                                 const existingSources = filesToMove.filter(({ exists }) => exists);
 
-                                                if (existingSources.length !== 0) {
-                                                        await fs.ensureDir(path.join(clientDir, '.launcher', 'cached'));
-                                                        await fs.remove(cachePath!);
-                                                        await fs.ensureDir(cachePath!);
+                                                        if (existingSources.length !== 0) {
+                                                                await fs.ensureDir(path.join(clientDir, '.launcher', 'cached'));
+                                                                await fs.remove(cachePath);
+                                                                await fs.ensureDir(cachePath);
 
-                                                        for (const { file, source } of existingSources) {
-                                                                try {
-                                                                        const destination = path.join(cachePath!, file);
-                                                                        await fs.ensureDir(path.dirname(destination));
-                                                                        await fs.move(source, destination, {
-                                                                                overwrite: true
+                                                                for (const { file, source } of existingSources) {
+                                                                        try {
+                                                                                const destination = path.join(cachePath, file);
+                                                                                await fs.ensureDir(path.dirname(destination));
+                                                                                await fs.move(source, destination, {
+                                                                                        overwrite: true
                                                                         });
                                                                 } catch (_error) {
                                                                         console.error(_error);
@@ -488,6 +491,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         this.#pendingInvalidations.delete(name);
                                         continue;
                                 }
+
+                                version = await fetchVersion(`${name}.version`);
+                                cachePath = getCachePath();
 
                                 let expectedFiles = this.#fileCache[name];
                                 if (!expectedFiles) {
@@ -607,8 +613,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                                 let needsDownload = false;
                                 let downloadReason: 'missing' | 'update' | 'metadata' = 'update';
-
-                                const cachedVersion = this.#versionCache[name];
 
                                 if (cachedVersion === version) {
                                         if (await hasAllFiles()) {
