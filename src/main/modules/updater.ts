@@ -96,21 +96,41 @@ const fetchFile = async (
 };
 
 const fetchSize = async (filePath: string) => {
-	try {
+        try {
                 const response = await fetch(resolvePatchUrl(filePath), {
                         method: 'HEAD'
                 });
-		return parseInt(response.headers.get('content-length') ?? '0');
-	} catch (e) {
-		Logger.log(`Failed to download ${filePath}`, 'error', e);
-		throw Error(`Failed to download ${filePath}`);
-	}
+
+                if (!response.ok) {
+                        throw new Error(
+                                `Failed to fetch metadata for ${filePath} (${response.status} ${response.statusText})`
+                        );
+                }
+
+                return parseInt(response.headers.get('content-length') ?? '0');
+        } catch (e) {
+                Logger.log(`Failed to download ${filePath}`, 'error', e);
+                throw Error(`Failed to download ${filePath}`);
+        }
 };
 
 const fetchVersion = async (filePath: string) => {
         try {
                 const response = await fetch(resolvePatchUrl(filePath));
-                return response.text();
+
+                if (!response.ok) {
+                        throw new Error(
+                                `Failed to fetch metadata for ${filePath} (${response.status} ${response.statusText})`
+                        );
+                }
+
+                const version = (await response.text()).trim();
+
+                if (/[/\\<>:"|?*]/.test(version)) {
+                        throw new Error(`Invalid version received for ${filePath}`);
+                }
+
+                return version;
         } catch (e) {
                 Logger.log(`Failed to download ${filePath}`, 'error', e);
                 throw Error(`Failed to download ${filePath}`);
