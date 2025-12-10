@@ -7,7 +7,6 @@ import { createIPCHandler } from 'electron-trpc/main';
 import icon from '~build/icon.png?asset';
 
 import Preferences from './modules/preferences';
-import Updater from './modules/updater';
 import Logger from './modules/logger';
 import { appRouter } from './api/root';
 
@@ -56,24 +55,25 @@ async function createWindow() {
 
 	createIPCHandler({ router: appRouter, windows: [mainWindow] });
 
-	mainWindow.on('ready-to-show', () => {
-		// Clean up all observers
-		Updater.clearObservers();
-
-		mainWindow?.show();
-	});
+        mainWindow.on('ready-to-show', () => {
+                mainWindow?.show();
+        });
 
 	mainWindow.webContents.setWindowOpenHandler(details => {
 		shell.openExternal(details.url);
 		return { action: 'deny' };
 	});
 
-	mainWindow.on('close', async () => {
-		if (!mainWindow) return;
-		const [x = 0, y = 0] = mainWindow.getPosition();
-		const [width = 0, height = 0] = mainWindow.getSize();
-		Preferences.data = { windowPosition: { x, y, width, height } };
-	});
+        mainWindow.on('close', async () => {
+                if (!mainWindow) return;
+                const [x = 0, y = 0] = mainWindow.getPosition();
+                const [width = 0, height = 0] = mainWindow.getSize();
+                Preferences.data = { windowPosition: { x, y, width, height } };
+        });
+
+        mainWindow.on('closed', () => {
+                mainWindow = null;
+        });
 
 	// HMR for renderer base on electron-vite cli.
 	// Load the remote URL for development or the local html file for production.
@@ -88,11 +88,10 @@ async function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
-	// Initialization
-	Preferences.data = await Preferences.load();
-	Updater.verify();
+        // Initialization
+        Preferences.data = await Preferences.load();
 
-	// Set app user model id for windows
+        // Set app user model id for windows
 	electronApp.setAppUserModelId('com.electron');
 
 	// Default open or close DevTools by F12 in development

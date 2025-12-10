@@ -4,7 +4,6 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { loggerLink } from '@trpc/client';
 import { ipcLink } from 'electron-trpc/renderer';
 import superjson from 'superjson';
-import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import { getQueryKey } from '@trpc/react-query';
 
 import { api } from './utils/api';
@@ -53,12 +52,11 @@ const trpcClient = api.createClient({
 });
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
-	<StrictMode>
-		<api.Provider client={trpcClient} queryClient={queryClient}>
-			<QueryClientProvider client={queryClient}>
-				<App />
-				<ReactQueryDevtools />
-			</QueryClientProvider>
-		</api.Provider>
-	</StrictMode>
+        <StrictMode>
+                <api.Provider client={trpcClient} queryClient={queryClient}>
+                        <QueryClientProvider client={queryClient}>
+                                <App />
+                        </QueryClientProvider>
+                </api.Provider>
+        </StrictMode>
 );
