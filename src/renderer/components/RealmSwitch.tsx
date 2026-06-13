@@ -30,7 +30,10 @@ const RealmSwitch = () => {
 
         const availableRealmEntries: [RealmId, (typeof REALMS)[RealmId]][] = pref?.isDev
                 ? (Object.entries(REALMS) as [RealmId, (typeof REALMS)[RealmId]][])
-                : [['legionnaire_plus', REALMS.legionnaire_plus]];
+                : [
+                          ['legionnaire_plus', REALMS.legionnaire_plus],
+                          ['barracks_plus', REALMS.barracks_plus]
+                  ];
 
         const selectedRealm =
                 pref?.selectedRealm &&
