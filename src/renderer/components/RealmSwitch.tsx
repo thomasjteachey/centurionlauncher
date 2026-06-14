@@ -1,68 +1,69 @@
 import { useState } from 'react';
 
-import { REALMS, type RealmId } from '~common/constants';
+import { PUBLIC_REALM_IDS, REALMS, type RealmId } from '~common/constants';
 import { type UpdaterStatus } from '~main/types';
 import { api } from '~renderer/utils/api';
 
 const RealmSwitch = () => {
-        const { data: pref } = api.preferences.get.useQuery();
-        const setPref = api.preferences.set.useMutation();
+	const { data: pref } = api.preferences.get.useQuery();
+	const setPref = api.preferences.set.useMutation();
 
-        const invalidate = api.updater.invalidate.useMutation();
-        const verify = api.updater.verify.useMutation();
+	const invalidate = api.updater.invalidate.useMutation();
+	const verify = api.updater.verify.useMutation();
 
-        const [updaterState, setUpdaterState] = useState<UpdaterStatus['state']>('needsValidation');
-        api.updater.observe.useSubscription(undefined, {
-                onData: data => setUpdaterState(data.state)
-        });
+	const [updaterState, setUpdaterState] =
+		useState<UpdaterStatus['state']>('needsValidation');
+	api.updater.observe.useSubscription(undefined, {
+		onData: data => setUpdaterState(data.state)
+	});
 
-        const isUpdaterBusy = updaterState === 'verifying' || updaterState === 'updating';
-        const isMutating = setPref.isLoading || invalidate.isLoading || verify.isLoading;
-        const isLoading = isUpdaterBusy || isMutating;
+	const isUpdaterBusy =
+		updaterState === 'verifying' || updaterState === 'updating';
+	const isMutating =
+		setPref.isLoading || invalidate.isLoading || verify.isLoading;
+	const isLoading = isUpdaterBusy || isMutating;
 
-        const onSelect = async (realm: RealmId) => {
-                if (isLoading) return;
-                if (pref?.selectedRealm === realm) return;
-                await setPref.mutateAsync({ selectedRealm: realm });
-                await invalidate.mutateAsync();
-                await verify.mutateAsync();
-        };
+	const onSelect = async (realm: RealmId) => {
+		if (isLoading) return;
+		if (pref?.selectedRealm === realm) return;
+		await setPref.mutateAsync({ selectedRealm: realm });
+		await invalidate.mutateAsync();
+		await verify.mutateAsync();
+	};
 
-        const availableRealmEntries: [RealmId, (typeof REALMS)[RealmId]][] = pref?.isDev
-                ? (Object.entries(REALMS) as [RealmId, (typeof REALMS)[RealmId]][])
-                : [
-                          ['legionnaire_plus', REALMS.legionnaire_plus],
-                          ['barracks_plus', REALMS.barracks_plus]
-                  ];
+	const availableRealmEntries: [RealmId, (typeof REALMS)[RealmId]][] =
+		pref?.isDev
+			? (Object.entries(REALMS) as [RealmId, (typeof REALMS)[RealmId]][])
+			: PUBLIC_REALM_IDS.map(id => [id, REALMS[id]]);
 
-        const selectedRealm =
-                pref?.selectedRealm &&
-                availableRealmEntries.some(([id]) => id === pref.selectedRealm)
-                        ? pref.selectedRealm
-                        : 'legionnaire_plus';
+	const selectedRealm =
+		pref?.selectedRealm &&
+		availableRealmEntries.some(([id]) => id === pref.selectedRealm)
+			? pref.selectedRealm
+			: 'legionnaire_plus';
 
-        return (
-                <>
-                        <p className="text-2xl">Select server:</p>
-                        <div className="flex">
-                                <select
-                                        className="w-full rounded border border-dark bg-dark p-3 text-lg uppercase text-text"
-                                        value={selectedRealm}
-                                        onChange={event => onSelect(event.target.value as RealmId)}
-                                        disabled={isLoading}
-                                >
-                                        <option value="" disabled hidden>
-                                                Select a realm
-                                        </option>
-                                        {availableRealmEntries.map(([id, meta]) => (
-                                                <option key={id} value={id}>
-                                                        {meta.label}
-                                                </option>
-                                        ))}
-                                </select>
-                        </div>
-                </>
-        );
+	return (
+		<>
+			<p className="text-2xl">Select server:</p>
+			<div className="flex">
+				<select
+					className="w-full rounded border border-dark bg-dark p-3 text-lg uppercase text-text"
+					value={selectedRealm}
+					onChange={event => onSelect(event.target.value as RealmId)}
+					disabled={isLoading}
+				>
+					<option value="" disabled hidden>
+						Select a realm
+					</option>
+					{availableRealmEntries.map(([id, meta]) => (
+						<option key={id} value={id}>
+							{meta.label}
+						</option>
+					))}
+				</select>
+			</div>
+		</>
+	);
 };
 
 export default RealmSwitch;
