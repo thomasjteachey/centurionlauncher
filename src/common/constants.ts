@@ -1,6 +1,6 @@
-export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://136.56.187.218/downloads/';
-export const DEFAULT_REALMLIST = '136.56.187.218';
-export const DEFAULT_AZEROTHCORE_REALMLIST = '136.56.187.218:3726';
+export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://centurionpvp.com/downloads/';
+export const DEFAULT_REALMLIST = 'centurionpvp.com';
+export const DEFAULT_AZEROTHCORE_REALMLIST = 'centurionpvp.com:3726';
 
 export const REALM_IDS = [
 	'legionnaire_plus',
