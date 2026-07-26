@@ -1,6 +1,6 @@
 {
 	"name": "centurion-launcher",
-	"version": "1.0.1",
+	"version": "1.1.8",
 	"description": "An Electron application for launching and updating CenturionWoW client",
 	"author": "Maroš Beťko (Haaxor1689)",
 	"main": "./out/main/index.js",
@@ -11,8 +11,10 @@
 		"postinstall": "electron-builder install-app-deps",
 		"build": "electron-vite build",
 		"build:test": "electron-vite build --mode test",
+		"clean:dist": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
 		"pack": "electron-builder --config",
-		"dist": "tsc && npm run build && npm run pack"
+		"package:download": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-download-zip.ps1",
+		"dist": "npm run clean:dist && tsc && npm run build && npm run pack && npm run package:download"
 	},
 	"dependencies": {
 		"@electron-toolkit/preload": "^1.0.3",
@@ -23,9 +25,9 @@
 		"@trpc/client": "^10.43.3",
 		"@trpc/react-query": "^10.43.3",
 		"@trpc/server": "^10.43.3",
-                "classnames": "^2.3.2",
-                "electron-trpc": "^0.5.2",
-                "fs-extra": "^11.1.1",
+		"classnames": "^2.3.2",
+		"electron-trpc": "^0.5.2",
+		"fs-extra": "^11.1.1",
 		"lucide-react": "^0.363.0",
 		"node-fetch": "^2.7.0",
 		"react-hook-form": "^7.48.2",

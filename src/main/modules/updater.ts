@@ -1,12 +1,14 @@
 import path from 'node:path';
 import { exec } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import nativeFs from 'node:fs';
 import os from 'node:os';
 
 import fetch from 'node-fetch';
 import fs from 'fs-extra';
 import yauzl from 'yauzl-promise';
 
-import { mainWindow } from '~main/index';
+import { getMainWindow } from '~main/index';
 import { formatDuration, formatFileSize } from '~common/utils';
 import { DEFAULT_LAUNCHER_UPDATE_URL, FileMap, type RealmId } from '~common/constants';
 
@@ -14,6 +16,7 @@ import Logger from './logger';
 import Preferences from './preferences';
 import Observable from './observable';
 import resumableFetch, { type FetchProgress } from './resumableFetch';
+import { getCompatibilityRuntime } from './compatibility';
 
 const resolveBaseUrl = () => {
         const { launcherUpdateUrl } = Preferences.data;
@@ -43,7 +46,33 @@ const execAsync = (commands: Partial<Record<NodeJS.Platform, string>>) => {
 	});
 };
 
+type StatFsResult = {
+	bavail: number | bigint;
+	bsize: number | bigint;
+};
+
+type StatFs = (
+	filePath: string,
+	callback: (error: NodeJS.ErrnoException | null, result: StatFsResult) => void
+) => void;
+
+const statFs = (nativeFs as unknown as { statfs?: StatFs }).statfs;
+
 const getAvailableDiskSpace = async (clientPath?: string) => {
+	if (clientPath && statFs) {
+		const available = await new Promise<number | undefined>(resolve => {
+			statFs(clientPath, (error, result) => {
+				if (error) {
+					resolve(undefined);
+					return;
+				}
+
+				resolve(Number(result.bavail) * Number(result.bsize));
+			});
+		});
+		if (available !== undefined && Number.isFinite(available)) return available;
+	}
+
 	const response = await execAsync({
 		win32:
 			'%SYSTEMROOT%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -command "Get-PSDrive -PSProvider FileSystem | Select-Object Name, @{n=\'Free\';e={($_.Free / 1GB)}}"'
@@ -59,11 +88,38 @@ const getAvailableDiskSpace = async (clientPath?: string) => {
 	return space * 1024 ** 3;
 };
 
+let trackedGameProcess: ChildProcess | undefined;
+
+export const trackGameProcess = (gameProcess: ChildProcess) => {
+	trackedGameProcess = gameProcess;
+	const clearTrackedProcess = () => {
+		if (trackedGameProcess === gameProcess) trackedGameProcess = undefined;
+	};
+	gameProcess.once('exit', clearTrackedProcess);
+	gameProcess.once('error', clearTrackedProcess);
+};
+
 export const isGameRunning = async () => {
+	if (
+		trackedGameProcess &&
+		trackedGameProcess.exitCode === null &&
+		trackedGameProcess.signalCode === null
+	)
+		return true;
+
 	const response = await execAsync({
 		win32: '%SYSTEMROOT%\\System32\\tasklist.exe'
 	});
-	if (!response) return false;
+	if (!response) {
+		const { isWine } = await getCompatibilityRuntime();
+		if (isWine) {
+			void Logger.log(
+				'Unable to query the Proton/Wine process list; relying on launcher process tracking.',
+				'warning'
+			);
+		}
+		return false;
+	}
 	return response.toLowerCase().includes('wow.exe');
 };
 
@@ -339,12 +395,15 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 	private set status(v: UpdaterStatus) {
 		this._value = v;
 		this._notifyObservers(v);
+		const window = getMainWindow();
+		if (!window) return;
+
 		if (this.status.state === 'failed') {
-			mainWindow?.setProgressBar(1, { mode: 'error' });
+			window.setProgressBar(1, { mode: 'error' });
 		} else if (this.status.progress === 1) {
-			mainWindow?.setProgressBar(0);
+			window.setProgressBar(0);
 		} else {
-			mainWindow?.setProgressBar(this.status.progress ?? 0, {
+			window.setProgressBar(this.status.progress ?? 0, {
 				mode: this.status.progress === -1 ? 'indeterminate' : 'normal'
 			});
 		}
@@ -353,14 +412,6 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 	invalidate() {
 		this.status = { state: 'needsValidation' };
 	}
-
-        async updateLauncher() {
-                Logger.log('Launcher updates are currently disabled.');
-                this.status = {
-                        state: 'failed',
-                        message: 'Launcher updates are currently disabled. Please download the latest release manually.'
-                };
-        }
 
 	async verify() {
 		const { clientDir, optionalPatches, selectedRealm, isPortable } =
@@ -717,9 +768,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 				return;
 			}
 
-			if (force) {
-				await fs.remove(path.join(Preferences.userDataDir, 'downloads'));
-			}
+			const downloadsDir = path.join(Preferences.userDataDir, 'downloads');
+			Logger.log(`Removing stale downloads from "${downloadsDir}"...`);
+			await fs.remove(downloadsDir);
 
 			Logger.log(`Updating client files at ${path.join(clientDir)}...`);
 			this.status = {

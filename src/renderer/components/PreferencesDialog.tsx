@@ -197,7 +197,7 @@ const PreferencesDialog = ({ close }: Props) => {
                                                 htmlFor="launcher-update-url"
                                                 className="text-sm text-text"
                                         >
-                                                Launcher update server
+                                                Game update server
                                         </label>
                                         <input
                                                 id="launcher-update-url"
@@ -216,7 +216,7 @@ const PreferencesDialog = ({ close }: Props) => {
                                                 placeholder={DEFAULT_LAUNCHER_UPDATE_URL}
                                         />
                                         <span className="text-xs text-textDark">
-                                                Changing this will automatically recheck for launcher updates.
+                                                Changing this will automatically recheck for game updates.
                                         </span>
                                 </div>
                                 <TextButton

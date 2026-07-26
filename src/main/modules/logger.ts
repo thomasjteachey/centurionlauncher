@@ -52,6 +52,18 @@ abstract class Logger {
 		this.#history.push(newMessage);
 	}
 
+	static async saveDiagnostics(diagnostics: unknown) {
+		try {
+			await fs.outputJSON(
+				path.join(Preferences.userDataDir, 'runtime.json'),
+				{ time: new Date().toISOString(), ...(diagnostics as object) },
+				{ spaces: 2 }
+			);
+		} catch (e) {
+			void this.log('Failed to write runtime diagnostics', 'warning', e);
+		}
+	}
+
 	static async saveLog() {
 		const files = await fs.readdir(Preferences.userDataDir);
 

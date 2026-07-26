@@ -4,10 +4,11 @@ import { spawn } from 'child_process';
 import fs from 'fs-extra';
 
 import Preferences from '~main/modules/preferences';
-import { mainWindow } from '~main/index';
+import { getMainWindow } from '~main/index';
 import Logger from '~main/modules/logger';
-import { isGameRunning } from '~main/modules/updater';
+import { isGameRunning, trackGameProcess } from '~main/modules/updater';
 import { patchConfig } from '~main/modules/patcher';
+import { getCompatibilityRuntime } from '~main/modules/compatibility';
 
 import { createTRPCRouter, publicProcedure } from '../trpc';
 
@@ -33,17 +34,43 @@ export const launcherRouter = createTRPCRouter({
 		await patchConfig();
 
 		Logger.log('Launching WoW...');
-		const process = spawn(clientPath, { detached: !reopenLauncher });
+		const runtime = await getCompatibilityRuntime();
+		let gameProcess;
+		try {
+			gameProcess = spawn(clientPath, {
+				cwd: clientDir,
+				detached: !reopenLauncher
+			});
+			await new Promise<void>((resolve, reject) => {
+				gameProcess.once('spawn', resolve);
+				gameProcess.once('error', reject);
+			});
+		} catch (error) {
+			Logger.log('Failed to launch WoW', 'error', error);
+			throw new Error(
+				runtime.isWine
+					? 'Failed to launch WoW through Proton/Wine. Verify the Steam compatibility tool and client location.'
+					: 'Failed to launch WoW. Verify the client location and permissions.'
+			);
+		}
+
+		trackGameProcess(gameProcess);
 
 		if (!reopenLauncher) {
-			mainWindow?.close();
+			getMainWindow()?.close();
 			return true;
 		}
 
-		mainWindow?.hide();
-		process.on('exit', () => {
+		getMainWindow()?.hide();
+		gameProcess.on('exit', (code, signal) => {
 			Logger.log('WoW stopped');
-			mainWindow?.show();
+			if (code && code !== 0) {
+				void Logger.log(
+					`WoW exited with code ${code}${signal ? ` (${signal})` : ''}.`,
+					'warning'
+				);
+			}
+			getMainWindow()?.show();
 		});
 		return true;
 	})

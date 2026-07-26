@@ -64,7 +64,7 @@ const resumableFetch = async (
 		}
 	}
 
-	const initialPartial = (await fs.exists(partialPath))
+	let initialPartial = (await fs.exists(partialPath))
 		? (await fs.stat(partialPath)).size
 		: 0;
 	let done = 0;
@@ -77,9 +77,31 @@ const resumableFetch = async (
 		Logger.log(`Downloading "${downloadPath}"`);
 	}
 
-        const response = await fetch(url, {
-                headers: { Range: `bytes=${initialPartial}-` }
-        });
+	let response = await fetch(
+		url,
+		initialPartial
+			? { headers: { Range: `bytes=${initialPartial}-` } }
+			: undefined
+	);
+
+	const contentRangeStart = Number(
+		response.headers.get('content-range')?.match(/^bytes (\d+)-/i)?.[1]
+	);
+	const invalidResume =
+		initialPartial > 0 &&
+		(response.status === 200 ||
+			response.status === 416 ||
+			(response.status === 206 && contentRangeStart !== initialPartial));
+
+	if (invalidResume) {
+		Logger.log(
+			`Discarding stale partial download "${partialPath}" and restarting.`
+		);
+		(response.body as { destroy?: () => void } | null)?.destroy?.();
+		await fs.remove(partialPath);
+		initialPartial = 0;
+		response = await fetch(url);
+	}
 
         if (!response.ok || !response.body) {
                 throw new Error(

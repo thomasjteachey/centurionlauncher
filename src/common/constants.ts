@@ -1,4 +1,4 @@
-export const DEFAULT_LAUNCHER_UPDATE_URL = 'http://centurionpvp.com/downloads/';
+export const DEFAULT_LAUNCHER_UPDATE_URL = 'https://centurionpvp.com/downloads/';
 export const DEFAULT_REALMLIST = 'centurionpvp.com';
 export const DEFAULT_AZEROTHCORE_REALMLIST = 'centurionpvp.com:3726';
 
@@ -107,6 +107,7 @@ export const FileMap: Record<
 	['patch-enUS-8']: { extractPath: 'Data/enUS', realms: ['legionnaire_plus'] },
 	['patch-enUS-9']: { extractPath: 'Data/enUS', realms: ['barracks'] },
 	['patch-enUS-A']: { extractPath: 'Data/enUS', realms: ['barracks_plus'] },
+	['patch-4']: { extractPath: 'Data', realms: ['legionnaire_plus'] },
 	['patch-Z']: { extractPath: 'Data' },
 	['patch-dungeon-maps']: {
 		extractPath: 'Data',
@@ -141,5 +142,21 @@ export const FileMap: Record<
 		optional: true,
 		label: 'HD Interface',
 		description: 'Shadowlands style user interface'
+	},
+	// Client-side fixes: vanilla stealth movement speed, and stopping spell
+	// animations from destroying melee swing animations.
+	//
+	// Ships dinput8.dll into the client root. Wow.exe statically imports
+	// DirectInput8Create and dinput8 is not a KnownDLL, so the local copy loads
+	// during process init.
+	//
+	// Mandatory (no `optional`), so it installs for everyone.
+	//
+	// Renamed from 'stealth-glide' in 1.1.8 once it covered more than stealth.
+	// The old key is still served so launchers on 1.1.7 keep working; both
+	// deliver the same dinput8.dll, so a client mid-migration just overwrites
+	// the same file. Retire stealth-glide.* from the server once 1.1.7 is gone.
+	['client-tweaks']: {
+		extractPath: '.'
 	}
 };

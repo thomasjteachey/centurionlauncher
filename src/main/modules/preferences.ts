@@ -15,7 +15,29 @@ import {
 } from '~common/schemas';
 import { omit } from '~common/utils';
 
-const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+import { getCompatibilityRuntime } from './compatibility';
+
+// The portable target sets PORTABLE_EXECUTABLE_DIR from its extractor stub. An
+// unpacked build has no stub — needed under Proton, where the self-extractor is
+// an extra failure point — so derive the same directory from the executable.
+const portableDir =
+	process.env.PORTABLE_EXECUTABLE_DIR ??
+	(app.isPackaged ? path.dirname(app.getPath('exe')) : undefined);
+
+const migrateLegacyDefaults = (json: Record<string, unknown>) => ({
+	...json,
+	realmList:
+		json.realmList === '136.56.187.218' ? DEFAULT_REALMLIST : json.realmList,
+	azerothcoreRealmList:
+		json.azerothcoreRealmList === '136.56.187.218:3726'
+			? DEFAULT_AZEROTHCORE_REALMLIST
+			: json.azerothcoreRealmList,
+	launcherUpdateUrl:
+		json.launcherUpdateUrl === 'http://centurionpvp.com/downloads/' ||
+		json.launcherUpdateUrl === 'http://136.56.187.218/downloads/'
+			? DEFAULT_LAUNCHER_UPDATE_URL
+			: json.launcherUpdateUrl
+});
 
 const enforceRealmVisibility = (prefs: PreferencesData): PreferencesData =>
 	prefs.isDev || PUBLIC_REALM_IDS.includes(prefs.selectedRealm)
@@ -31,17 +53,20 @@ abstract class Preferences {
 		})
 	);
 
-	static readonly userDataDir = process.env.PORTABLE_EXECUTABLE_DIR
-		? path.join(process.env.PORTABLE_EXECUTABLE_DIR, '.launcher')
+	static readonly userDataDir = portableDir
+		? path.join(portableDir, '.launcher')
 		: app.getPath('userData');
 
 	static async load() {
+		await fs.ensureDir(this.userDataDir);
 		const userDataPath = path.join(this.userDataDir, 'settings.json');
+		const { isWine } = await getCompatibilityRuntime();
 		try {
-			const json = await fs.readJSON(userDataPath);
+			const json = migrateLegacyDefaults(await fs.readJSON(userDataPath));
 			return enforceRealmVisibility(
 				PreferencesSchema.parse({
 					...json,
+					reopenLauncher: json.reopenLauncher ?? isWine,
 					isPortable: !!portableDir,
 					clientDir: portableDir ?? json.clientDir
 				})
@@ -49,6 +74,7 @@ abstract class Preferences {
 		} catch (e) {
 			return enforceRealmVisibility(
 				PreferencesSchema.parse({
+					reopenLauncher: isWine,
 					isPortable: !!portableDir,
 					clientDir: portableDir
 				})

@@ -1,5 +1,6 @@
 import { join } from 'path';
 
+import fs from 'fs-extra';
 import { app, shell, BrowserWindow } from 'electron';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import { createIPCHandler } from 'electron-trpc/main';
@@ -8,31 +9,112 @@ import icon from '~build/icon.png?asset';
 
 import Preferences from './modules/preferences';
 import Updater from './modules/updater';
+import LauncherUpdater from './modules/launcherUpdater';
 import Logger from './modules/logger';
+import {
+	getCompatibilityDiagnostics,
+	getCompatibilityRuntimeSync
+} from './modules/compatibility';
 import { appRouter } from './api/root';
 
 export let mainWindow: BrowserWindow | null = null;
+let isQuitting = false;
+
+// Chromium's process sandbox and its out-of-process GPU are not implemented by
+// Wine, so under Proton the child processes die on spawn and the launcher hangs
+// with no window. These switches have to be applied before app.whenReady().
+const isTruthyEnv = (value?: string) => /^(1|true|yes|on)$/i.test(value ?? '');
+const isFalsyEnv = (value?: string) => /^(0|false|no|off)$/i.test(value ?? '');
+
+const applyCompatibilitySwitches = () => {
+	const runtime = getCompatibilityRuntimeSync();
+	const override = process.env.CENTURION_COMPAT_MODE;
+
+	const enabled = isFalsyEnv(override)
+		? false
+		: isTruthyEnv(override) ||
+		  runtime.isWine ||
+		  process.argv.includes('--compat-mode');
+
+	if (!enabled) return { runtime, compatibilitySwitches: false };
+
+	app.commandLine.appendSwitch('no-sandbox');
+	app.commandLine.appendSwitch('disable-gpu-sandbox');
+	app.commandLine.appendSwitch('in-process-gpu');
+	app.commandLine.appendSwitch('disable-gpu-compositing');
+	app.commandLine.appendSwitch(
+		'disable-features',
+		'HardwareMediaKeyHandling,MediaSessionService'
+	);
+	app.disableHardwareAcceleration();
+
+	return { runtime, compatibilitySwitches: true };
+};
+
+// Written synchronously so that even an exit before app.whenReady() leaves a
+// trace. Everything else in this file logs too late to explain a silent quit.
+const breadcrumb = (stage: string, detail?: Record<string, unknown>) => {
+	try {
+		fs.ensureDirSync(Preferences.userDataDir);
+		fs.appendFileSync(
+			join(Preferences.userDataDir, 'startup.log'),
+			`[${new Date().toISOString()}] ${stage}${
+				detail ? ` ${JSON.stringify(detail)}` : ''
+			}\n`
+		);
+	} catch (e) {
+		// Never let diagnostics stop startup.
+	}
+};
+
+breadcrumb('boot', { pid: process.pid, argv: process.argv.slice(1) });
+
+const compatibility = applyCompatibilitySwitches();
+
+breadcrumb('compatibility', {
+	layer: compatibility.runtime.compatibilityLayer,
+	switches: compatibility.compatibilitySwitches
+});
+
+export const getMainWindow = () => {
+	const window = mainWindow;
+	return window && !window.isDestroyed() ? window : null;
+};
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
+breadcrumb('single-instance', { acquired: hasSingleInstanceLock });
+
 if (!hasSingleInstanceLock) {
-        app.quit();
-        process.exit(0);
+	// Wine keeps hung processes alive under wineserver, and Chromium's process
+	// singleton then hands the lock to a zombie that owns no window. Exiting
+	// there makes the launcher permanently unstartable, so under a
+	// compatibility layer a lost lock is treated as stale.
+	if (!compatibility.compatibilitySwitches) {
+		app.quit();
+		process.exit(0);
+	}
+
+	breadcrumb('single-instance-ignored', {
+		reason: 'compatibility layer, assuming stale lock'
+	});
 }
 
 app.on('second-instance', () => {
-        if (mainWindow) {
-                if (mainWindow.isMinimized()) {
-                        mainWindow.restore();
-                }
+	const window = getMainWindow();
+	if (!window) {
+		if (!isQuitting && app.isReady()) void createWindow();
+		return;
+	}
 
-                mainWindow.focus();
-        } else {
-                createWindow();
-        }
+	if (window.isMinimized()) window.restore();
+	window.show();
+	window.focus();
 });
 
 async function createWindow() {
+	if (isQuitting || getMainWindow()) return;
+
 	const { rememberPosition, windowPosition } = Preferences.data;
 
 	const position = rememberPosition
@@ -40,7 +122,7 @@ async function createWindow() {
 		: { width: 800, height: 600 };
 
 	// Create the browser window.
-	mainWindow = new BrowserWindow({
+	const window = new BrowserWindow({
 		...position,
 		minWidth: 800,
 		minHeight: 600,
@@ -53,34 +135,59 @@ async function createWindow() {
 			devTools: import.meta.env.MODE !== 'production'
 		}
 	});
+	mainWindow = window;
 
-	createIPCHandler({ router: appRouter, windows: [mainWindow] });
+	createIPCHandler({ router: appRouter, windows: [window] });
 
-	mainWindow.on('ready-to-show', () => {
-		// Clean up all observers
-		Updater.clearObservers();
-
-		mainWindow?.show();
+	window.on('ready-to-show', () => {
+		if (!window.isDestroyed()) window.show();
 	});
 
-	mainWindow.webContents.setWindowOpenHandler(details => {
+	// Software rendering under Wine can miss the first paint. Never leave the
+	// process alive behind an invisible window.
+	const showFallback = setTimeout(() => {
+		if (window.isDestroyed() || window.isVisible()) return;
+		void Logger.log('Window did not paint in time, forcing show', 'warning');
+		window.show();
+	}, 10000);
+
+	window.webContents.on('did-fail-load', (_event, code, description, url) => {
+		void Logger.log(
+			`Renderer failed to load ${url}: ${description} (${code})`,
+			'error'
+		);
+	});
+
+	window.webContents.on('render-process-gone', (_event, details) => {
+		void Logger.log('Renderer process gone', 'error', details);
+	});
+
+	window.webContents.setWindowOpenHandler(details => {
 		shell.openExternal(details.url);
 		return { action: 'deny' };
 	});
 
-	mainWindow.on('close', async () => {
-		if (!mainWindow) return;
-		const [x = 0, y = 0] = mainWindow.getPosition();
-		const [width = 0, height = 0] = mainWindow.getSize();
+	window.on('close', () => {
+		if (window.isDestroyed()) return;
+		const [x = 0, y = 0] = window.getPosition();
+		const [width = 0, height = 0] = window.getSize();
 		Preferences.data = { windowPosition: { x, y, width, height } };
+	});
+
+	window.on('closed', () => {
+		clearTimeout(showFallback);
+		// Only safe once the window is gone; clearing while a renderer is
+		// subscribed permanently silences its status updates.
+		Updater.clearObservers();
+		if (mainWindow === window) mainWindow = null;
 	});
 
 	// HMR for renderer base on electron-vite cli.
 	// Load the remote URL for development or the local html file for production.
 	if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-		mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+		window.loadURL(process.env.ELECTRON_RENDERER_URL);
 	} else {
-		mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
+		window.loadFile(join(__dirname, '../renderer/index.html'));
 	}
 }
 
@@ -88,12 +195,23 @@ async function createWindow() {
 // initialization and is ready to create browser windows.
 // Some APIs can only be used after this event occurs.
 app.whenReady().then(async () => {
+	breadcrumb('ready');
+
 	// Initialization
 	Preferences.data = await Preferences.load();
-	Updater.verify();
+	const diagnostics = {
+		...(await getCompatibilityDiagnostics()),
+		compatibilitySwitches: compatibility.compatibilitySwitches,
+		packaged: app.isPackaged,
+		portable: Preferences.data.isPortable ?? false
+	};
+	void Logger.log('Runtime diagnostics', undefined, diagnostics);
+	// Written eagerly so a startup hang still leaves something to look at; the
+	// regular log is only flushed on exit.
+	void Logger.saveDiagnostics(diagnostics);
 
 	// Set app user model id for windows
-	electronApp.setAppUserModelId('com.electron');
+	electronApp.setAppUserModelId('com.centurionpvp.launcher');
 
 	// Default open or close DevTools by F12 in development
 	// and ignore CommandOrControl + R in production.
@@ -102,11 +220,23 @@ app.whenReady().then(async () => {
 		optimizer.watchWindowShortcuts(window);
 	});
 
+	app.on('child-process-gone', (_event, details) => {
+		void Logger.log(`Child process gone: ${details.type}`, 'error', details);
+	});
+
 	await createWindow();
+	breadcrumb('window-created', { visible: getMainWindow()?.isVisible() });
+	void LauncherUpdater.check();
+	void Updater.verify();
 });
 
 // Quit when all windows are closed
+app.on('before-quit', () => {
+	isQuitting = true;
+});
+
 app.on('window-all-closed', async () => {
+	isQuitting = true;
 	await Logger.saveLog();
 	app.quit();
 });
