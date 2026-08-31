@@ -1,7 +1,7 @@
-import fetch from 'node-fetch';
 import fs from 'fs-extra';
 
 import Logger from './logger';
+import updateFetch from './updateFetch';
 
 type ProgressOptions = {
 	throttle?: number;
@@ -77,7 +77,7 @@ const resumableFetch = async (
 		Logger.log(`Downloading "${downloadPath}"`);
 	}
 
-	let response = await fetch(
+	let response = await updateFetch(
 		url,
 		initialPartial
 			? { headers: { Range: `bytes=${initialPartial}-` } }
@@ -100,7 +100,7 @@ const resumableFetch = async (
 		(response.body as { destroy?: () => void } | null)?.destroy?.();
 		await fs.remove(partialPath);
 		initialPartial = 0;
-		response = await fetch(url);
+		response = await updateFetch(url);
 	}
 
         if (!response.ok || !response.body) {

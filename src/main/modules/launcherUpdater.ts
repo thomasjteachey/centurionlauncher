@@ -3,7 +3,6 @@ import { spawn } from 'node:child_process';
 import { pipeline } from 'node:stream/promises';
 
 import { app } from 'electron';
-import fetch from 'node-fetch';
 import fs from 'fs-extra';
 import yauzl from 'yauzl-promise';
 
@@ -12,6 +11,7 @@ import Observable from './observable';
 import Preferences from './preferences';
 import resumableFetch, { type FetchProgress } from './resumableFetch';
 import { getCompatibilityRuntime } from './compatibility';
+import updateFetch from './updateFetch';
 
 const LAUNCHER_VERSION_FILE = 'centurionlauncher.version';
 const LAUNCHER_ARCHIVE_FILE = 'centurionlauncher.zip';
@@ -154,7 +154,7 @@ class LauncherUpdaterClass extends Observable<LauncherUpdaterStatus> {
 				message: 'Checking for launcher updates...'
 			});
 
-			const versionResponse = await fetch(
+			const versionResponse = await updateFetch(
 				resolveLauncherUrl(LAUNCHER_VERSION_FILE)
 			);
 			if (!versionResponse.ok) {

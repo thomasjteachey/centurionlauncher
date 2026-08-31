@@ -92,6 +92,13 @@ export const FileMap: Record<
 		label?: string;
 		description?: string;
 		realms?: RealmId[];
+		/**
+		 * Remote basename to fetch instead when the launcher is in dev mode.
+		 * The archive still contains the REAL .MPQ name, so it drops into the
+		 * client exactly where the live patch would - only the download source
+		 * differs. Path is relative to downloads/patches/.
+		 */
+		devFile?: string;
 	}
 > = {
 	['addons']: { extractPath: 'Interface/Addons' },
@@ -104,11 +111,35 @@ export const FileMap: Record<
 		extractPath: 'Data/enUS',
 		realms: ['legionnaire', 'legionnaire_plus', 'barracks', 'barracks_plus']
 	},
-	['patch-enUS-8']: { extractPath: 'Data/enUS', realms: ['legionnaire_plus'] },
+	['patch-enUS-8']: {
+		extractPath: 'Data/enUS',
+		realms: ['legionnaire_plus']
+	},
+	// The dev DBC delta, layered above patch-enUS-8 exactly as patch-Z is
+	// layered above patch-Y. 'T' sorts after '8', so the client loads this last
+	// and it wins.
+	//
+	// It used to be patch-enUS-8's devFile, which meant the test archive
+	// carried patch-enUS-8.MPQ and OVERWROTE the live patch on every dev
+	// launch. Anything published straight into the live patch was silently
+	// reverted the next time the launcher ran, and the only symptom was
+	// "my change didn't take". Layering instead of replacing removes that
+	// whole class of confusion, and keeps the download to the few DBCs the
+	// forge actually modified rather than a 55MB copy of the base.
+	['patch-enUS-T']: {
+		extractPath: 'Data/enUS',
+		realms: ['legionnaire_plus'],
+		devFile: 'itemforge/patch-enUS-T-test'
+	},
 	['patch-enUS-9']: { extractPath: 'Data/enUS', realms: ['barracks'] },
 	['patch-enUS-A']: { extractPath: 'Data/enUS', realms: ['barracks_plus'] },
 	['patch-4']: { extractPath: 'Data', realms: ['legionnaire_plus'] },
-	['patch-Z']: { extractPath: 'Data' },
+	// The production art base. patch-Z used to carry all of it; it is now the
+	// small dev-only delta layered above this, so a texture save no longer
+	// makes every dev redownload 700MB. On patch day the delta is merged down
+	// into patch-Y and the production patch-Z goes back to (nearly) empty.
+	['patch-Y']: { extractPath: 'Data' },
+	['patch-Z']: { extractPath: 'Data', devFile: 'itemforge/patch-Z-test' },
 	['patch-dungeon-maps']: {
 		extractPath: 'Data',
 		realms: ['barracks', 'townsendboys']

@@ -1,7 +1,7 @@
 import { join } from 'path';
 
 import fs from 'fs-extra';
-import { app, shell, BrowserWindow } from 'electron';
+import { app, shell, BrowserWindow, nativeImage } from 'electron';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import { createIPCHandler } from 'electron-trpc/main';
 
@@ -53,21 +53,67 @@ const applyCompatibilitySwitches = () => {
 
 // Written synchronously so that even an exit before app.whenReady() leaves a
 // trace. Everything else in this file logs too late to explain a silent quit.
+// Under Proton the working directory is not obvious and a single location is
+// easy to miss, so every candidate is written and stderr always gets a copy —
+// stderr is what Proton captures in its own log.
+const breadcrumbPaths = () => {
+	const candidates: (() => string)[] = [
+		() => join(Preferences.userDataDir, 'startup.log'),
+		() => join(app.getPath('userData'), 'startup.log'),
+		() => join(app.getPath('temp'), 'centurion-startup.log')
+	];
+
+	const paths = new Set<string>();
+	for (const candidate of candidates) {
+		try {
+			paths.add(candidate());
+		} catch (e) {
+			// A path that cannot be resolved is simply skipped.
+		}
+	}
+	return [...paths];
+};
+
 const breadcrumb = (stage: string, detail?: Record<string, unknown>) => {
+	const line = `[${new Date().toISOString()}] ${stage}${
+		detail ? ` ${JSON.stringify(detail)}` : ''
+	}\n`;
+
 	try {
-		fs.ensureDirSync(Preferences.userDataDir);
-		fs.appendFileSync(
-			join(Preferences.userDataDir, 'startup.log'),
-			`[${new Date().toISOString()}] ${stage}${
-				detail ? ` ${JSON.stringify(detail)}` : ''
-			}\n`
-		);
+		process.stderr.write(`[centurion] ${line}`);
 	} catch (e) {
-		// Never let diagnostics stop startup.
+		// No console attached; the files below still carry the trace.
+	}
+
+	const failures: string[] = [];
+	for (const target of breadcrumbPaths()) {
+		try {
+			fs.ensureDirSync(join(target, '..'));
+			fs.appendFileSync(target, line);
+		} catch (e) {
+			failures.push(`${target}: ${(e as Error).message}`);
+		}
+	}
+
+	// Silence here is what made the last round undiagnosable.
+	if (failures.length) {
+		try {
+			process.stderr.write(
+				`[centurion] breadcrumb write failed -> ${failures.join(' | ')}\n`
+			);
+		} catch (e) {
+			// Nothing left to report through.
+		}
 	}
 };
 
-breadcrumb('boot', { pid: process.pid, argv: process.argv.slice(1) });
+breadcrumb('boot', {
+	pid: process.pid,
+	argv: process.argv.slice(1),
+	exe: app.getPath('exe'),
+	cwd: process.cwd(),
+	userDataDir: Preferences.userDataDir
+});
 
 const compatibility = applyCompatibilitySwitches();
 
@@ -81,6 +127,19 @@ export const getMainWindow = () => {
 	return window && !window.isDestroyed() ? window : null;
 };
 
+// build/icon.png is 2048x2048 for the installer. Wine publishes the window icon
+// as _NET_WM_ICON, and at that size the X request (16MB) exceeds the protocol
+// maximum, which Xlib treats as fatal — the process dies while the window is
+// being created. Window icons are never drawn above ~48px anyway.
+const windowIcon = (() => {
+	try {
+		const image = nativeImage.createFromPath(icon);
+		return image.isEmpty() ? undefined : image.resize({ width: 256, height: 256 });
+	} catch (e) {
+		return undefined;
+	}
+})();
+
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 
 breadcrumb('single-instance', { acquired: hasSingleInstanceLock });
@@ -89,8 +148,11 @@ if (!hasSingleInstanceLock) {
 	// Wine keeps hung processes alive under wineserver, and Chromium's process
 	// singleton then hands the lock to a zombie that owns no window. Exiting
 	// there makes the launcher permanently unstartable, so under a
-	// compatibility layer a lost lock is treated as stale.
-	if (!compatibility.compatibilitySwitches) {
+	// compatibility layer a lost lock is treated as stale. This keys off the
+	// detected runtime rather than whether the switches were applied, so that
+	// forcing switches on Windows does not also weaken the instance guard, and
+	// disabling them under Wine does not restore the silent exit.
+	if (!compatibility.runtime.isWine) {
 		app.quit();
 		process.exit(0);
 	}
@@ -126,7 +188,7 @@ async function createWindow() {
 		...position,
 		minWidth: 800,
 		minHeight: 600,
-		icon,
+		icon: windowIcon ?? icon,
 		frame: false,
 		webPreferences: {
 			preload: join(__dirname, '../preload/index.js'),

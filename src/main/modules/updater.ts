@@ -4,7 +4,6 @@ import type { ChildProcess } from 'node:child_process';
 import nativeFs from 'node:fs';
 import os from 'node:os';
 
-import fetch from 'node-fetch';
 import fs from 'fs-extra';
 import yauzl from 'yauzl-promise';
 
@@ -17,6 +16,7 @@ import Preferences from './preferences';
 import Observable from './observable';
 import resumableFetch, { type FetchProgress } from './resumableFetch';
 import { getCompatibilityRuntime } from './compatibility';
+import updateFetch from './updateFetch';
 
 const resolveBaseUrl = () => {
         const { launcherUpdateUrl } = Preferences.data;
@@ -25,6 +25,19 @@ const resolveBaseUrl = () => {
 
 const resolvePatchUrl = (filePath: string) =>
         new URL(`patches/${filePath.replace(/^\/+/, '')}`, resolveBaseUrl()).toString();
+
+/**
+ * Remote basename for a patch: the live one, or its dev counterpart when the
+ * launcher is in dev mode and the patch has one.
+ *
+ * The .version file follows the same name, so the update cache holds a
+ * different value in each mode - toggling dev on or off therefore re-downloads
+ * that patch by itself, instead of leaving the other build's archive in place.
+ */
+const remoteName = (name: string) => {
+        const devFile = FileMap[name]?.devFile;
+        return Preferences.data.isDev && devFile ? devFile : name;
+};
 
 // const isReadOnly = async (filePath: string) => {
 // 	try {
@@ -129,12 +142,15 @@ const fetchFile = async (
 	force: boolean = false
 ) => {
 	try {
-		await fs.ensureDir(path.join(Preferences.userDataDir, 'downloads'));
 		const downloadPath = path.join(
 			Preferences.userDataDir,
 			'downloads',
 			filePath
 		);
+		// The parent of the FILE, not just the downloads folder: a remote path
+		// can contain a subdirectory (dev patches live under itemforge/), and
+		// resumableFetch opens a write stream without creating anything.
+		await fs.ensureDir(path.dirname(downloadPath));
                 await resumableFetch(
                         resolvePatchUrl(filePath),
                         downloadPath,
@@ -153,7 +169,7 @@ const fetchFile = async (
 
 const fetchSize = async (filePath: string) => {
         try {
-                const response = await fetch(resolvePatchUrl(filePath), {
+                const response = await updateFetch(resolvePatchUrl(filePath), {
                         method: 'HEAD'
                 });
 
@@ -172,7 +188,7 @@ const fetchSize = async (filePath: string) => {
 
 const fetchVersion = async (filePath: string) => {
         try {
-                const response = await fetch(resolvePatchUrl(filePath));
+                const response = await updateFetch(resolvePatchUrl(filePath));
 
                 if (!response.ok) {
                         throw new Error(
@@ -543,7 +559,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         continue;
                                 }
 
-                                version = await fetchVersion(`${name}.version`);
+                                version = await fetchVersion(`${remoteName(name)}.version`);
                                 cachePath = getCachePath();
 
                                 let expectedFiles = this.#fileCache[name];
@@ -715,7 +731,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         );
                                 }
 
-                                toDownload += await fetchSize(`${name}.zip`);
+                                toDownload += await fetchSize(`${remoteName(name)}.zip`);
                         }
 
 			await this.#saveCache(clientDir);
@@ -799,7 +815,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                         continue;
 
 				Logger.log(`Downloading ${name} files...`);
-				const file = await fetchFile(`${name}.zip`, (p: FetchProgress) => {
+				const file = await fetchFile(`${remoteName(name)}.zip`, (p: FetchProgress) => {
 					const progress =
 						(p.done + p.initialPartial) / (p.total + p.initialPartial);
 					const percent = Math.round(progress * 100);
@@ -842,7 +858,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                                 this.#fileCache[name] = extractedFiles;
 
-                                const version = await fetchVersion(`${name}.version`);
+                                const version = await fetchVersion(`${remoteName(name)}.version`);
                                 this.#versionCache[name] = version;
                                 this.#pendingInvalidations.delete(name);
 
@@ -1025,7 +1041,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                         Logger.log(
                                 `Missing ${name} files for ${realmKey}. Downloading to restore realm patches...`
                         );
-                        const file = await fetchFile(`${name}.zip`);
+                        const file = await fetchFile(`${remoteName(name)}.zip`);
                         const extractedFiles = await extractArchiveWithRetry(
                                 name,
                                 file,
@@ -1034,7 +1050,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
                         this.#fileCache[name] = extractedFiles;
 
-                        const version = await fetchVersion(`${name}.version`);
+                        const version = await fetchVersion(`${remoteName(name)}.version`);
                         this.#versionCache[name] = version;
 
                         if (shouldCache) {

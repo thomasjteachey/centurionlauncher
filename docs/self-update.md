@@ -35,6 +35,12 @@ The update server must serve both files directly over HTTPS. The generated ZIP m
 contain `CenturionLauncher.exe` at its root. Code-signing the portable executable is
 strongly recommended before public rollout.
 
+LAN clients may configure the update server with a literal HTTPS address such as
+`https://192.168.1.226/downloads/`. For direct-IP update requests, the launcher still
+uses `centurionpvp.com` for TLS SNI and certificate verification, so the existing
+public certificate remains valid without a hosts-file or local-DNS entry. Certificate
+verification is not disabled.
+
 ## Proton and Wine
 
 The PowerShell replacement helper is not used when the launcher detects Proton or

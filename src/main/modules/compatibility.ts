@@ -67,6 +67,22 @@ const hasWineFileMarker = () => {
 	});
 };
 
+// Wine maps the Unix root to Z:. Requiring a directory that only exists on a
+// Unix filesystem keeps a mapped Z: network drive on real Windows from matching.
+const UNIX_ROOT_MARKERS = ['Z:\\proc', 'Z:\\usr', 'Z:\\etc'];
+
+const hasUnixRootDrive = () => {
+	if (process.platform !== 'win32') return false;
+
+	return UNIX_ROOT_MARKERS.some(marker => {
+		try {
+			return existsSync(marker);
+		} catch (e) {
+			return false;
+		}
+	});
+};
+
 const collectHints = () => {
 	const steamAppId = readEnvironment('SteamAppId', 'SteamGameId');
 	const hasSteamCompatDataPath = hasAnyEnvironment(
@@ -125,12 +141,15 @@ let runtimePromise: Promise<CompatibilityRuntime> | undefined;
  * registry fallback, which the async variant fills in later.
  */
 export const getCompatibilityRuntimeSync = () =>
-	buildRuntime(collectHints(), hasWineFileMarker());
+	buildRuntime(collectHints(), hasWineFileMarker() || hasUnixRootDrive());
 
 export const getCompatibilityRuntime = () => {
 	runtimePromise ??= (async () => {
 		const hints = collectHints();
-		const runtime = buildRuntime(hints, hasWineFileMarker());
+		const runtime = buildRuntime(
+			hints,
+			hasWineFileMarker() || hasUnixRootDrive()
+		);
 		if (runtime.isWine) return runtime;
 		return buildRuntime(hints, await hasWineRegistryKey());
 	})();
@@ -152,6 +171,7 @@ export const getCompatibilityDiagnostics = async () => {
 		steamCompatDataPathDetected: runtime.hasSteamCompatDataPath,
 		winePrefixDetected: runtime.hasWinePrefix,
 		wineFileMarkerDetected: hasWineFileMarker(),
+		unixRootDriveDetected: hasUnixRootDrive(),
 		steamCompatToolPaths: readEnvironment('STEAM_COMPAT_TOOL_PATHS'),
 		commandLine: process.argv.slice(1)
 	};
