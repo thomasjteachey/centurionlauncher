@@ -13,6 +13,32 @@ import {
         REALMS
 } from '~common/constants';
 
+// Data/<locale>/realmlist.wtf takes precedence over Config.wtf's realmList, so a
+// stale one has to be removed. The locale directory used to be hardcoded as
+// 'enUs', which only matched on case-insensitive Windows volumes. Under
+// Proton/Wine the client sits on a case-sensitive filesystem, so the remove
+// silently did nothing and the stale file kept overriding the realm.
+const removeRealmlistOverrides = async (clientDir: string) => {
+	const dataDir = path.join(clientDir, 'Data');
+	if (!(await fs.pathExists(dataDir))) return;
+
+	const entries = await fs.readdir(dataDir).catch(() => [] as string[]);
+	await Promise.all(
+		entries.map(async entry => {
+			const localeDir = path.join(dataDir, entry);
+			const stats = await fs.stat(localeDir).catch(() => undefined);
+			if (!stats?.isDirectory()) return;
+
+			const files = await fs.readdir(localeDir).catch(() => [] as string[]);
+			await Promise.all(
+				files
+					.filter(file => file.toLowerCase() === 'realmlist.wtf')
+					.map(file => fs.remove(path.join(localeDir, file)))
+			);
+		})
+	);
+};
+
 export const patchConfig = async () => {
         const { clientDir, selectedRealm, realmList, azerothcoreRealmList } = Preferences.data;
         if (!clientDir) return;
@@ -221,21 +247,25 @@ export const patchConfig = async () => {
 
         await fs.writeFile(exePath, buffer);
 
-        await fs.remove(path.join(clientDir, 'Data', 'enUs', 'realmlist.wtf'));
+	await removeRealmlistOverrides(clientDir);
 	await fs.ensureDir(path.join(clientDir, 'WTF'));
 
 	const configPath = path.join(clientDir, 'WTF', 'Config.wtf');
 	const raw = (await fs.exists(configPath))
 		? await fs.readFile(configPath, { encoding: 'utf-8' })
 		: '';
-	await fs.remove(configPath);
+	// Deliberately not removed here. The file is replaced atomically below, so a
+	// crash between delete and write can no longer leave the player with no config.
+	const eol = raw.includes('\r\n') ? '\r\n' : '\n';
 
 	const configWtf = Object.fromEntries(
 		raw
 			.split('\n')
 			.map(l => {
-				const [_, k, v] = l.match(/SET (\w+) "(.+)"/) ?? [];
-				return !k || !v ? undefined : [k, v];
+				// '.*' rather than '.+': WoW legitimately writes keys with empty
+				// values, and the old pattern dropped every one of them on each launch.
+				const [_, k, v] = l.match(/^\s*SET\s+(\w+)\s+"(.*)"/) ?? [];
+				return !k ? undefined : [k, v ?? ''];
 			})
 			.filter(isNotUndef)
 	);
@@ -255,8 +285,16 @@ export const patchConfig = async () => {
         };
 
 	const parsed = {
-		// Defaults
+		// Seeded once, then owned by the player. Anything listed BEFORE the
+		// ...configWtf spread is a default the player's saved value overrides;
+		// anything listed AFTER it overwrites the player on every single launch.
+		// gxWindow/gxMaximize used to sit after the spread, which is exactly why
+		// the game snapped back to maximized windowed mode however it was set.
 		gxResolution: `${width}x${height}`,
+		gxWindow: 1, // Maximized windowed mode
+		gxMaximize: 1, // Maximized windowed mode
+		gxCursor: 1, // Hardware cursor
+		checkAddonVersion: 0, // Load out of date addons
 		// gxColorBits: primaryDisplay.colorDepth,
 		// gxDepthBits: primaryDisplay.colorDepth,
 		// gxRefresh: 60,
@@ -284,21 +322,22 @@ export const patchConfig = async () => {
 		...configWtf,
 		// Realm list
 		...realmInfo,
-		// Mandatory
-		hwDetect: 0, // Skip hardware change detection
-		gxWindow: 1, // Maximized windowed mode
-		gxMaximize: 1, // Maximized windowed mode
-		gxCursor: 1, // Hardware cursor
-		// M2UseShaders: 1, // Vertex animation shader
-		checkAddonVersion: 0 // Load out of date addons
+		// Mandatory. hwDetect is not exposed in WoW's options UI and exists only to
+		// stop the client re-detecting hardware and resetting the very graphics
+		// block this change is meant to preserve, so it stays launcher-owned.
+		hwDetect: 0 // Skip hardware change detection
 	};
 
-	await fs.writeFile(
-		configPath,
+	const contents =
 		Object.entries(parsed)
 			.filter(v => v[1] !== undefined && v[1] !== null)
 			.map(l => `SET ${l[0]} "${l[1]}"`)
-			.join('\n')
-	);
+			.join(eol) + eol;
+
+	// Temp file + rename, so the config is replaced atomically instead of being
+	// deleted first and rewritten afterwards.
+	const tempPath = `${configPath}.launcher-tmp`;
+	await fs.writeFile(tempPath, contents);
+	await fs.move(tempPath, configPath, { overwrite: true });
 	Logger.log('Config.wtf successfully patched');
 };
