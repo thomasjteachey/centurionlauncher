@@ -40,7 +40,13 @@ const removeRealmlistOverrides = async (clientDir: string) => {
 };
 
 export const patchConfig = async () => {
-        const { clientDir, selectedRealm, realmList, azerothcoreRealmList } = Preferences.data;
+        const {
+                clientDir,
+                selectedRealm,
+                realmList,
+                azerothcoreRealmList,
+                configSeededFor
+        } = Preferences.data;
         if (!clientDir) return;
 
         const realmKey = selectedRealm ?? 'legionnaire_plus';
@@ -284,17 +290,29 @@ export const patchConfig = async () => {
                 realmName: realmConfig.realmName
         };
 
+	// Written only the first time we touch a given client. WoW drops any cvar
+	// whose value equals the client default when it rewrites Config.wtf, so after
+	// the player picks a default-valued option the key simply disappears from the
+	// file. Seeding on every launch would read that absence as "never set" and put
+	// the launcher's value back, which is what kept forcing maximized windowed
+	// mode back on. Ordering still matters for the first run: these sit before the
+	// ...configWtf spread so an existing config always wins.
+	// Also requires an empty/absent Config.wtf: if the client already has one,
+	// the player already has settings and the launcher has no business adding
+	// display values to it.
+	const isFirstSeed = configSeededFor !== clientDir && !raw;
+	const seeded = isFirstSeed
+		? {
+				gxResolution: `${width}x${height}`,
+				gxWindow: 1, // Maximized windowed mode
+				gxMaximize: 1, // Maximized windowed mode
+				gxCursor: 1, // Hardware cursor
+				checkAddonVersion: 0 // Load out of date addons
+		  }
+		: {};
+
 	const parsed = {
-		// Seeded once, then owned by the player. Anything listed BEFORE the
-		// ...configWtf spread is a default the player's saved value overrides;
-		// anything listed AFTER it overwrites the player on every single launch.
-		// gxWindow/gxMaximize used to sit after the spread, which is exactly why
-		// the game snapped back to maximized windowed mode however it was set.
-		gxResolution: `${width}x${height}`,
-		gxWindow: 1, // Maximized windowed mode
-		gxMaximize: 1, // Maximized windowed mode
-		gxCursor: 1, // Hardware cursor
-		checkAddonVersion: 0, // Load out of date addons
+		...seeded,
 		// gxColorBits: primaryDisplay.colorDepth,
 		// gxDepthBits: primaryDisplay.colorDepth,
 		// gxRefresh: 60,
@@ -339,5 +357,9 @@ export const patchConfig = async () => {
 	const tempPath = `${configPath}.launcher-tmp`;
 	await fs.writeFile(tempPath, contents);
 	await fs.move(tempPath, configPath, { overwrite: true });
+
+	// Only after a successful write, so a failure here does not mark the client as
+	// seeded and silently skip the defaults forever.
+	if (isFirstSeed) Preferences.data = { configSeededFor: clientDir };
 	Logger.log('Config.wtf successfully patched');
 };

@@ -37,6 +37,12 @@ export const PreferencesSchema = z.object({
         isPortable: z.boolean().optional(),
         isDev: f.boolean(),
         clientDir: z.string().optional(),
+        // Client dir whose Config.wtf has already received the launcher's one-time
+        // defaults. WoW omits any cvar equal to its default when it rewrites the
+        // file, so a launcher that re-seeds on every launch cannot tell "absent
+        // because the player chose the default" from "absent because new install"
+        // and keeps resurrecting settings the player deliberately turned off.
+        configSeededFor: z.string().optional(),
         reopenLauncher: f.boolean(),
         cleanWdb: f.boolean(true),
         rememberPosition: f.boolean(),
