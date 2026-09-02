@@ -24,7 +24,9 @@ const portableDir =
 	process.env.PORTABLE_EXECUTABLE_DIR ??
 	(app.isPackaged ? path.dirname(app.getPath('exe')) : undefined);
 
-const migrateLegacyDefaults = (json: Record<string, unknown>) => ({
+const migrateLegacyDefaults = (
+	json: Record<string, unknown>
+): Record<string, unknown> => ({
 	...json,
 	realmList:
 		json.realmList === '136.56.187.218' ? DEFAULT_REALMLIST : json.realmList,
@@ -67,6 +69,11 @@ abstract class Preferences {
 				PreferencesSchema.parse({
 					...json,
 					reopenLauncher: json.reopenLauncher ?? isWine,
+					// A settings.json that predates this flag belongs to a player who has
+					// already been running the game, so treat their client as initialised.
+					// Defaulting to false would re-seed the display keys one last time and
+					// force maximized mode back on once more after the update.
+					clientInitialized: json.clientInitialized ?? true,
 					isPortable: !!portableDir,
 					clientDir: portableDir ?? json.clientDir
 				})

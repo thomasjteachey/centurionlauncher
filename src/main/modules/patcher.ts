@@ -45,7 +45,7 @@ export const patchConfig = async () => {
                 selectedRealm,
                 realmList,
                 azerothcoreRealmList,
-                configSeededFor
+                clientInitialized
         } = Preferences.data;
         if (!clientDir) return;
 
@@ -297,10 +297,10 @@ export const patchConfig = async () => {
 	// the launcher's value back, which is what kept forcing maximized windowed
 	// mode back on. Ordering still matters for the first run: these sit before the
 	// ...configWtf spread so an existing config always wins.
-	// Also requires an empty/absent Config.wtf: if the client already has one,
-	// the player already has settings and the launcher has no business adding
-	// display values to it.
-	const isFirstSeed = configSeededFor !== clientDir && !raw;
+	// Keyed purely off the stored flag. Presence of a Config.wtf says nothing:
+	// the packaged client distributions ship one, so gating on its absence would
+	// mean a brand new install never got seeded at all.
+	const isFirstSeed = !clientInitialized;
 	const seeded = isFirstSeed
 		? {
 				gxResolution: `${width}x${height}`,
@@ -360,6 +360,6 @@ export const patchConfig = async () => {
 
 	// Only after a successful write, so a failure here does not mark the client as
 	// seeded and silently skip the defaults forever.
-	if (isFirstSeed) Preferences.data = { configSeededFor: clientDir };
+	if (isFirstSeed) Preferences.data = { clientInitialized: true };
 	Logger.log('Config.wtf successfully patched');
 };
