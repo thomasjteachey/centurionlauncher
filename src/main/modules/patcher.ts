@@ -56,7 +56,8 @@ export const patchConfig = async () => {
 
         // Patch WoW.exe
         const exePath = path.join(clientDir, 'WoW.exe');
-        const buffer = await fs.readFile(exePath);
+        const original = await fs.readFile(exePath);
+        const buffer = Buffer.from(original);
         buffer.fill(0x00, 0x5f3a00, 0x5f3a00 + 6);
         buffer.write(realmConfig.build.string, 0x5f3a00, realmConfig.build.string.length);
         buffer.writeUInt16LE(realmConfig.build.number, 0x4c99f0);
@@ -251,7 +252,19 @@ export const patchConfig = async () => {
         // Allow chat commands while dead
         writeByte(0x10ca41, 0xeb);
 
-        await fs.writeFile(exePath, buffer);
+	// The byte patches are deterministic, so from the second launch onward the
+	// client is already patched and rewriting it is pure risk for no gain.
+	if (buffer.equals(original)) {
+		void Logger.log('WoW.exe is already patched, leaving it untouched');
+	} else {
+		// Temp file + rename. The previous plain writeFile truncated a multi-megabyte
+		// executable in place on every launch, so an interrupted or failed write left
+		// the player with a corrupt WoW.exe and no way back.
+		const tempExePath = `${exePath}.launcher-tmp`;
+		await fs.writeFile(tempExePath, buffer);
+		await fs.move(tempExePath, exePath, { overwrite: true });
+		void Logger.log('WoW.exe patched');
+	}
 
 	await removeRealmlistOverrides(clientDir);
 	await fs.ensureDir(path.join(clientDir, 'WTF'));
@@ -277,7 +290,12 @@ export const patchConfig = async () => {
 	);
 
 	const primaryDisplay = screen.getPrimaryDisplay();
-	const { width, height } = primaryDisplay.bounds;
+	// bounds is reported in DIPs. On a display running at 125% or 150% scaling
+	// that seeds a non-native mode (2560x1440 at 125% would seed 2048x1152), so
+	// convert back to physical pixels.
+	const { scaleFactor } = primaryDisplay;
+	const width = Math.round(primaryDisplay.bounds.width * scaleFactor);
+	const height = Math.round(primaryDisplay.bounds.height * scaleFactor);
 
         const realmHost =
                 realmConfig.realmlistType === 'azerothcore'

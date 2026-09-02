@@ -112,6 +112,28 @@ export const trackGameProcess = (gameProcess: ChildProcess) => {
 	gameProcess.once('error', clearTrackedProcess);
 };
 
+// Wine ships no tasklist.exe, so the process list is unavailable and the guard
+// below would report "not running" for a client the launcher did not start
+// itself - after a launcher restart, for instance. A running client keeps its
+// executable open, so a refused write-open is a reliable stand-in.
+const isClientExecutableLocked = async (clientDir?: string) => {
+	if (!clientDir) return false;
+
+	let handle: number | undefined;
+	try {
+		handle = await fs.open(path.join(clientDir, 'WoW.exe'), 'r+');
+		return false;
+	} catch (error) {
+		// Only a sharing violation counts. EPERM/EACCES mean a permissions or
+		// read-only-attribute problem, and a missing file means no client at all -
+		// none of those are evidence the game is running, and treating them as such
+		// would block launching outright.
+		return (error as NodeJS.ErrnoException).code === 'EBUSY';
+	} finally {
+		if (handle !== undefined) await fs.close(handle).catch(() => undefined);
+	}
+};
+
 export const isGameRunning = async () => {
 	if (
 		trackedGameProcess &&
@@ -127,9 +149,10 @@ export const isGameRunning = async () => {
 		const { isWine } = await getCompatibilityRuntime();
 		if (isWine) {
 			void Logger.log(
-				'Unable to query the Proton/Wine process list; relying on launcher process tracking.',
+				'Unable to query the Proton/Wine process list; falling back to a lock check on WoW.exe.',
 				'warning'
 			);
+			return isClientExecutableLocked(Preferences.data.clientDir);
 		}
 		return false;
 	}
