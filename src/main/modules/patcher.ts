@@ -45,7 +45,8 @@ export const patchConfig = async () => {
                 selectedRealm,
                 realmList,
                 azerothcoreRealmList,
-                clientInitialized
+                clientInitialized,
+                borderlessFullscreen
         } = Preferences.data;
         if (!clientDir) return;
 
@@ -86,8 +87,19 @@ export const patchConfig = async () => {
                 }
         });
 
-        // windowed mode to full screen
-        writeByte(0x0e94, 0xeb);
+        // Maximized-windowed rendered as true borderless fullscreen.
+        //
+        // Stock 3.3.5a 12340 has 0x74 (JZ) here, verified byte-for-byte against a
+        // clean client; the patch makes it 0xEB (JMP) so the branch is always
+        // taken. Plain windowed is unaffected either way - this only changes what
+        // the maximized/borderless path does.
+        //
+        // Toggling it off writes the STOCK byte rather than simply skipping the
+        // write, so an already-patched client is reverted on the next launch
+        // instead of being stuck with borderless forever. Needed for Wine, Proton
+        // and WoWSilicon, where the borderless path triggers a real display-mode
+        // change that blanks other monitors and locks the mouse.
+        writeByte(0x0e94, borderlessFullscreen ? 0xeb : 0x74);
 
         // melee swing on right-click
         fillBytes(0x2e1c67, 0x90, 11);

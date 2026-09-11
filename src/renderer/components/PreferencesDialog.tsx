@@ -137,6 +137,13 @@ const PreferencesDialog = ({ close }: Props) => {
                                         setValue={v => setPref.mutateAsync({ cleanWdb: v })}
                                         label="Clean WDB on each launch"
                                 />
+                                <CheckboxInput
+                                        value={pref?.borderlessFullscreen ?? true}
+                                        setValue={v =>
+                                                setPref.mutateAsync({ borderlessFullscreen: v })
+                                        }
+                                        label="Borderless fullscreen when maximized (turn off for Mac / Proton)"
+                                />
                                 <div className="mt-3 flex flex-col gap-1 pl-2">
                                         <label htmlFor="realm-list" className="text-sm text-text">
                                                 Trinitycore realmlist server

@@ -45,6 +45,14 @@ export const PreferencesSchema = z.object({
         clientInitialized: f.boolean(),
         reopenLauncher: f.boolean(),
         cleanWdb: f.boolean(true),
+        // Rewrites the conditional at Wow.exe+0x0e94 so maximized-windowed
+        // renders as true borderless fullscreen. Stock is 0x74 (JZ); the patch
+        // makes it 0xEB (JMP). On by default because that is what the client has
+        // always shipped with here, but it has to be switchable: under Wine,
+        // Proton and WoWSilicon the borderless path makes the client perform a
+        // real display-mode change, which blanks other monitors and lets
+        // DirectInput grab the mouse with no way to tab out.
+        borderlessFullscreen: f.boolean(true),
         rememberPosition: f.boolean(),
         launcherUpdateUrl: z
                 .string()

@@ -140,9 +140,16 @@ export const FileMap: Record<
 	// into patch-Y and the production patch-Z goes back to (nearly) empty.
 	['patch-Y']: { extractPath: 'Data' },
 	['patch-Z']: { extractPath: 'Data', devFile: 'itemforge/patch-Z-test' },
+	// The in-instance floor maps. Barracks Plus was added 2026-09-04: it had
+	// never been on this list, because when the patch was introduced B+ still
+	// shared 'barracks' patches, and the split onto its own patch-enUS-A left
+	// this entry keyed on the old realm name alone. The symptom is a dungeon
+	// map that draws blank parchment with an empty floor selector, since the
+	// archive carrying WorldMapArea/DungeonMap and the Interface\WorldMap art
+	// is simply absent from the client.
 	['patch-dungeon-maps']: {
 		extractPath: 'Data',
-		realms: ['barracks', 'townsendboys']
+		realms: ['barracks', 'barracks_plus', 'townsendboys']
 	},
 	['hd-creatures']: {
 		extractPath: 'Data',
