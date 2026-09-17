@@ -264,6 +264,13 @@ export const patchConfig = async () => {
         // Allow chat commands while dead
         writeByte(0x10ca41, 0xeb);
 
+        // Character list of up to 20 characters. The SMSG_CHAR_ENUM handler
+        // (0x464C10) empties any list longer than this byte - stock 0x0A (10) -
+        // via `cmp byte ptr [ebp-1], 0Ah` at 0x464C4C. The list storage is sized
+        // from the count (0x464B30), so nothing else is fixed at 10. Harmless on
+        // realms whose server still sends at most 10 (CharactersPerRealm).
+        writeByte(0x6404f, 0x14);
+
 	// The byte patches are deterministic, so from the second launch onward the
 	// client is already patched and rewriting it is pure risk for no gain.
 	if (buffer.equals(original)) {
