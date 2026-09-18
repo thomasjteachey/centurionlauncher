@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
         DEFAULT_AZEROTHCORE_REALMLIST,
         DEFAULT_LAUNCHER_UPDATE_URL,
+        DEFAULT_REALM_ID,
         DEFAULT_REALMLIST,
         REALM_IDS
 } from './constants';
@@ -74,7 +75,7 @@ export const PreferencesSchema = z.object({
                         height: z.number()
                 })
                 .nullish(),
-        selectedRealm: z.enum(REALM_IDS).default('legionnaire_plus'),
+        selectedRealm: z.enum(REALM_IDS).default(DEFAULT_REALM_ID),
         optionalPatches: z.array(z.string()).default([])
 });
 export type PreferencesSchema = z.infer<typeof PreferencesSchema>;

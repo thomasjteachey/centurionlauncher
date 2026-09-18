@@ -9,7 +9,12 @@ import yauzl from 'yauzl-promise';
 
 import { getMainWindow } from '~main/index';
 import { formatDuration, formatFileSize } from '~common/utils';
-import { DEFAULT_LAUNCHER_UPDATE_URL, FileMap, type RealmId } from '~common/constants';
+import {
+	DEFAULT_LAUNCHER_UPDATE_URL,
+	DEFAULT_REALM_ID,
+	FileMap,
+	type RealmId
+} from '~common/constants';
 
 import Logger from './logger';
 import Preferences from './preferences';
@@ -17,6 +22,7 @@ import Observable from './observable';
 import resumableFetch, { type FetchProgress } from './resumableFetch';
 import { getCompatibilityRuntime } from './compatibility';
 import updateFetch from './updateFetch';
+import { migrateRenamedPatch, removePatchFiles } from './patchFiles';
 
 const resolveBaseUrl = () => {
         const { launcherUpdateUrl } = Preferences.data;
@@ -27,16 +33,18 @@ const resolvePatchUrl = (filePath: string) =>
         new URL(`patches/${filePath.replace(/^\/+/, '')}`, resolveBaseUrl()).toString();
 
 /**
- * Remote basename for a patch: the live one, or its dev counterpart when the
- * launcher is in dev mode and the patch has one.
+ * Remote basename for a patch: the live one (its remoteFile, else its key), or
+ * its dev counterpart when the launcher is in dev mode and the patch has one.
  *
  * The .version file follows the same name, so the update cache holds a
  * different value in each mode - toggling dev on or off therefore re-downloads
  * that patch by itself, instead of leaving the other build's archive in place.
  */
 const remoteName = (name: string) => {
-        const devFile = FileMap[name]?.devFile;
-        return Preferences.data.isDev && devFile ? devFile : name;
+        const meta = FileMap[name];
+        return Preferences.data.isDev && meta?.devFile
+                ? meta.devFile
+                : meta?.remoteFile ?? name;
 };
 
 // const isReadOnly = async (filePath: string) => {
@@ -248,18 +256,27 @@ const extractArchive = async (
         name: string,
         file: string,
         filePath: string,
-        progressCb?: ExtractProgressCallback
+        progressCb?: ExtractProgressCallback,
+        extractAs?: Record<string, string>
 ) => {
         let finished = false;
         const archive = await yauzl.open(file);
         const extractedFiles: string[] = [];
         try {
                 for await (const entry of archive) {
-                        Logger.log(`Extracting "${entry.filename}"...`);
+                        // Written straight to the new name, never to the archive's own:
+                        // the art base's entry is patch-Y.MPQ, and extracting it under
+                        // that name would overwrite World Terrain's archive.
+                        const localName = extractAs?.[entry.filename] ?? entry.filename;
+                        Logger.log(
+                                localName === entry.filename
+                                        ? `Extracting "${entry.filename}"...`
+                                        : `Extracting "${entry.filename}" as "${localName}"...`
+                        );
                         if (entry.filename.endsWith('/')) {
                                 await fs.ensureDir(path.join(filePath, entry.filename));
                         } else {
-                                const dest = path.join(filePath, entry.filename);
+                                const dest = path.join(filePath, localName);
                                 await fs.ensureDir(path.dirname(dest));
                                 const readStream = await entry.openReadStream();
                                 const writeStream = fs.createWriteStream(dest);
@@ -299,7 +316,7 @@ const extractArchive = async (
                                         readStream.pipe(writeStream);
                                 });
 
-                                extractedFiles.push(entry.filename);
+                                extractedFiles.push(localName);
                         }
                 }
                 finished = true;
@@ -320,15 +337,17 @@ const extractArchive = async (
  * @param file      Full path to the downloaded .zip on disk
  * @param filePath  Destination root on disk
  * @param progressCb Extraction progress callback (same shape as extractArchive)
+ * @param extractAs Archive entries to write under a different local name
  */
 const extractArchiveWithRetry = async (
         name: string,
         file: string,
         filePath: string,
-        progressCb?: ExtractProgressCallback
+        progressCb?: ExtractProgressCallback,
+        extractAs?: Record<string, string>
 ): Promise<string[]> => {
         try {
-                return await extractArchive(name, file, filePath, progressCb);
+                return await extractArchive(name, file, filePath, progressCb, extractAs);
         } catch (err) {
                 if (!isCorruptZipLocalHeaderError(err)) {
                         throw err;
@@ -344,7 +363,7 @@ const extractArchiveWithRetry = async (
                 const patchFileName = path.basename(file);
                 const freshFile = await fetchFile(patchFileName, undefined, true);
 
-                return await extractArchive(name, freshFile, filePath, progressCb);
+                return await extractArchive(name, freshFile, filePath, progressCb, extractAs);
         }
 };
 
@@ -415,6 +434,29 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 			: {};
 	};
 
+	// Runs before anything is verified, so the renamed files are found in place
+	// under the new key. The cache is saved straight away: if verification
+	// failed later, a stale cache would still point at the old name, and the
+	// next run would download the whole archive again.
+	#migrateRenamedPatches = async (clientDir: string) => {
+		for (const [name, meta] of Object.entries(FileMap)) {
+			if (!meta.migrateFrom) continue;
+			try {
+				const renamed = await migrateRenamedPatch(clientDir, name, meta, {
+					versions: this.#versionCache,
+					files: this.#fileCache
+				});
+				if (renamed.length === 0) continue;
+				Logger.log(
+					`Moved ${meta.migrateFrom} to ${name} in place: ${renamed.join(', ')}`
+				);
+				await this.#saveCache(clientDir);
+			} catch (e) {
+				Logger.log(`Failed to move ${meta.migrateFrom} to ${name}`, 'error', e);
+			}
+		}
+	};
+
 	#saveCache = async (clientDir: string) => {
 		await fs.ensureDir(path.join(clientDir, '.launcher'));
 
@@ -455,7 +497,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 	async verify() {
 		const { clientDir, optionalPatches, selectedRealm, isPortable } =
 		Preferences.data;
-		const realmKey = selectedRealm ?? 'legionnaire_plus';
+		const realmKey = selectedRealm ?? DEFAULT_REALM_ID;
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -497,6 +539,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                         };
 
                         await this.#loadCache(clientDir);
+                        await this.#migrateRenamedPatches(clientDir);
                         let toDownload = 0;
 
                         const verificationEntries = Object.entries(FileMap);
@@ -576,6 +619,22 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                                         console.error(_error);
                                                                 }
                                                         }
+                                                }
+                                        }
+                                        if (meta.removeWhenUnused) {
+                                                try {
+                                                        const removed = await removePatchFiles(
+                                                                clientDir,
+                                                                meta.extractPath,
+                                                                meta.removeWhenUnused
+                                                        );
+                                                        if (removed.length !== 0) {
+                                                                Logger.log(
+                                                                        `Removed ${removed.join(', ')} because ${name} is not in use.`
+                                                                );
+                                                        }
+                                                } catch (e) {
+                                                        Logger.log(`Failed to remove unused ${name} files`, 'error', e);
                                                 }
                                         }
                                         this.#pendingInvalidations.delete(name);
@@ -786,7 +845,7 @@ class UpdaterClass extends Observable<UpdaterStatus> {
 
         async update(force?: boolean) {
                 const { clientDir, optionalPatches, selectedRealm } = Preferences.data;
-		const realmKey = selectedRealm ?? 'legionnaire_plus';
+		const realmKey = selectedRealm ?? DEFAULT_REALM_ID;
 		try {
 			if (
 				this.status?.state === 'verifying' ||
@@ -876,7 +935,8 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                                                         progress,
                                                         message: `Extracting ${name}... ${percent}%`
                                                 };
-                                        }
+                                        },
+                                        meta.extractAs
                                 );
 
                                 this.#fileCache[name] = extractedFiles;
@@ -1068,7 +1128,9 @@ class UpdaterClass extends Observable<UpdaterStatus> {
                         const extractedFiles = await extractArchiveWithRetry(
                                 name,
                                 file,
-                                path.join(clientDir, meta.extractPath)
+                                path.join(clientDir, meta.extractPath),
+                                undefined,
+                                meta.extractAs
                         );
 
                         this.#fileCache[name] = extractedFiles;

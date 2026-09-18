@@ -7,15 +7,32 @@ export const REALM_IDS = [
 	'legionnaire',
 	'barracks',
 	'barracks_plus',
+	'centurion',
+	'centurion_dev',
 	'trinityworld',
 	'townsendboys'
 ] as const;
 export type RealmId = (typeof REALM_IDS)[number];
 
-export const PUBLIC_REALM_IDS = [
+// Everything not listed here (centurion_dev included) only shows up, and can
+// only stay selected, while the launcher is in dev mode.
+export const PUBLIC_REALM_IDS = ['centurion'] as const satisfies readonly RealmId[];
+
+// Legionnaire+ and Barracks+ merged into Centurion on 2026-09-17 and left the
+// realmlist. They stay in REALM_IDS so a saved preference naming them still
+// parses (an unknown id would reset every preference), but no mode offers them
+// and a launcher that had one selected moves to DEFAULT_REALM_ID. Their FileMap
+// entries stay too: that is what moves their realm-only archives (patch-enUS-8,
+// patch-enUS-T, patch-4) out of Data on the first verify after the switch.
+export const RETIRED_REALM_IDS = [
 	'legionnaire_plus',
 	'barracks_plus'
 ] as const satisfies readonly RealmId[];
+
+export const DEFAULT_REALM_ID: RealmId = 'centurion';
+
+export const isRetiredRealm = (id: RealmId) =>
+	(RETIRED_REALM_IDS as readonly RealmId[]).includes(id);
 
 type BuildInfo = {
 	string: string;
@@ -70,6 +87,20 @@ export const REALMS: Record<
 		build: BUILD_12342,
 		realmlistType: 'trinitycore'
 	},
+	// Barracks+-based realms (realmlist ids 7 and 8). realmName has to match
+	// legionnaireauth.realmlist.name exactly for the client to land on them.
+	centurion: {
+		label: 'Centurion',
+		realmName: 'Centurion',
+		build: BUILD_12342,
+		realmlistType: 'trinitycore'
+	},
+	centurion_dev: {
+		label: 'Centurion Dev',
+		realmName: 'CenturionDev',
+		build: BUILD_12342,
+		realmlistType: 'trinitycore'
+	},
 	trinityworld: {
 		label: 'TRINITYWORLD',
 		realmName: 'TRINITYWORLD',
@@ -99,17 +130,55 @@ export const FileMap: Record<
 		 * differs. Path is relative to downloads/patches/.
 		 */
 		devFile?: string;
+		/**
+		 * Remote basename to fetch instead of the key, in every mode (devFile
+		 * still wins in dev mode). Lets an archive take a new name on disk while
+		 * the server keeps publishing it under the old one.
+		 */
+		remoteFile?: string;
+		/** Archive entries written to disk under a different name. */
+		extractAs?: Record<string, string>;
+		/**
+		 * The FileMap key this patch used to be installed under. A client whose
+		 * cache still records it there, and nothing under this key, gets the files
+		 * renamed per extractAs, keeping the recorded version, instead of
+		 * downloading the archive again.
+		 */
+		migrateFrom?: string;
+		/**
+		 * Files in extractPath deleted whenever this patch is not in use, so an
+		 * older archive that shipped under the same name on disk stops loading.
+		 */
+		removeWhenUnused?: string[];
 	}
 > = {
 	['addons']: { extractPath: 'Interface/Addons' },
 	['patch-enUS-4']: { extractPath: 'Data/enUS', realms: ['townsendboys'] },
+	// Centurion and Centurion Dev take exactly the Barracks+ patch set: their
+	// servers were cloned from Barracks+ (DBCs included) on 2026-09-16. Once
+	// their data diverges they need a patch letter of their own, the way
+	// Barracks+ split off onto patch-enUS-A.
 	['patch-enUS-6']: {
 		extractPath: 'Data/enUS',
-		realms: ['legionnaire', 'legionnaire_plus', 'barracks', 'barracks_plus']
+		realms: [
+			'legionnaire',
+			'legionnaire_plus',
+			'barracks',
+			'barracks_plus',
+			'centurion',
+			'centurion_dev'
+		]
 	},
 	['patch-enUS-7']: {
 		extractPath: 'Data/enUS',
-		realms: ['legionnaire', 'legionnaire_plus', 'barracks', 'barracks_plus']
+		realms: [
+			'legionnaire',
+			'legionnaire_plus',
+			'barracks',
+			'barracks_plus',
+			'centurion',
+			'centurion_dev'
+		]
 	},
 	['patch-enUS-8']: {
 		extractPath: 'Data/enUS',
@@ -132,13 +201,28 @@ export const FileMap: Record<
 		devFile: 'itemforge/patch-enUS-T-test'
 	},
 	['patch-enUS-9']: { extractPath: 'Data/enUS', realms: ['barracks'] },
-	['patch-enUS-A']: { extractPath: 'Data/enUS', realms: ['barracks_plus'] },
+	['patch-enUS-A']: {
+		extractPath: 'Data/enUS',
+		realms: ['barracks_plus', 'centurion', 'centurion_dev']
+	},
 	['patch-4']: { extractPath: 'Data', realms: ['legionnaire_plus'] },
 	// The production art base. patch-Z used to carry all of it; it is now the
 	// small dev-only delta layered above this, so a texture save no longer
 	// makes every dev redownload 700MB. On patch day the delta is merged down
-	// into patch-Y and the production patch-Z goes back to (nearly) empty.
-	['patch-Y']: { extractPath: 'Data' },
+	// into the art base and the production patch-Z goes back to (nearly) empty.
+	//
+	// It was installed as patch-Y.MPQ until 2026-09-17, and moved down a letter
+	// to free patch-Y for the optional World Terrain pack. The server still
+	// publishes it as patch-Y.zip / patch-Y.version, because launchers from
+	// before the move keep reading that name, and so do the forge and
+	// promote_patch_z.py; the entry inside is still patch-Y.MPQ and is written
+	// to disk as patch-X.MPQ. Clients that already hold it are renamed in place.
+	['patch-X']: {
+		extractPath: 'Data',
+		remoteFile: 'patch-Y',
+		extractAs: { 'patch-Y.MPQ': 'patch-X.MPQ' },
+		migrateFrom: 'patch-Y'
+	},
 	['patch-Z']: { extractPath: 'Data', devFile: 'itemforge/patch-Z-test' },
 	// The in-instance floor maps. Barracks Plus was added 2026-09-04: it had
 	// never been on this list, because when the patch was introduced B+ still
@@ -149,7 +233,13 @@ export const FileMap: Record<
 	// is simply absent from the client.
 	['patch-dungeon-maps']: {
 		extractPath: 'Data',
-		realms: ['barracks', 'barracks_plus', 'townsendboys']
+		realms: [
+			'barracks',
+			'barracks_plus',
+			'centurion',
+			'centurion_dev',
+			'townsendboys'
+		]
 	},
 	['hd-creatures']: {
 		extractPath: 'Data',
@@ -180,6 +270,36 @@ export const FileMap: Record<
 		optional: true,
 		label: 'HD Interface',
 		description: 'Shadowlands style user interface'
+	},
+	// Reznik's world art (patch-Y.MPQ), lifted from his client patches: his
+	// versions of World, Tileset, Dungeons and Environments textures, his
+	// replacement doodads and WMOs where they cannot move collision, and his
+	// lighting and Skywall skybox. No terrain ships, so every model replaces a
+	// file clients already load under the same name and stock placements stay.
+	// A model ships when neither version collides, or when its collision surface
+	// matches the original at 95% or better; anything else keeps the original.
+	//
+	// His files replace the art base's copies too (the owner's call), so an art
+	// base update to one of those files will not show for players with the toggle
+	// on until it is copied into this archive as well. Never shipped from his
+	// patches: DBCs other than Light.dbc, UI, creature, character, item and spell
+	// art, sounds.
+	//
+	// Light.dbc is the realms' copy (patch-enUS-A and -8 are identical) with his
+	// light edits merged in, minus battleground maps and the lobby's light.
+	// Because 'Y' ranks above those patches, a later Light.dbc change there has
+	// to be merged into this archive too, or players with the toggle on will not
+	// see it.
+	//
+	// While the toggle is off, any patch-Y.MPQ is deleted: before the art base
+	// moved to patch-X.MPQ, every client carried it under that name, and a
+	// leftover copy would keep loading above patch-X and shadow its updates.
+	['world-terrain']: {
+		extractPath: 'Data',
+		optional: true,
+		label: 'Alt World',
+		description: "Reznik's world textures, models, skyboxes and lighting",
+		removeWhenUnused: ['patch-Y.MPQ']
 	},
 	// Client-side fixes: vanilla stealth movement speed, and stopping spell
 	// animations from destroying melee swing animations.

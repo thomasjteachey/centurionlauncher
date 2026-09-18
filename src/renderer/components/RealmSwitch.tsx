@@ -2,7 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import cls from 'classnames';
 import { ChevronDown } from 'lucide-react';
 
-import { PUBLIC_REALM_IDS, REALMS, type RealmId } from '~common/constants';
+import {
+	DEFAULT_REALM_ID,
+	isRetiredRealm,
+	PUBLIC_REALM_IDS,
+	REALMS,
+	type RealmId
+} from '~common/constants';
 import { type UpdaterStatus } from '~main/types';
 import { api } from '~renderer/utils/api';
 
@@ -30,14 +36,16 @@ const RealmSwitch = () => {
 
 	const availableRealmEntries: [RealmId, (typeof REALMS)[RealmId]][] =
 		pref?.isDev
-			? (Object.entries(REALMS) as [RealmId, (typeof REALMS)[RealmId]][])
+			? (Object.entries(REALMS) as [RealmId, (typeof REALMS)[RealmId]][]).filter(
+					([id]) => !isRetiredRealm(id)
+				)
 			: PUBLIC_REALM_IDS.map(id => [id, REALMS[id]]);
 
 	const selectedRealm =
 		pref?.selectedRealm &&
 		availableRealmEntries.some(([id]) => id === pref.selectedRealm)
 			? pref.selectedRealm
-			: 'legionnaire_plus';
+			: DEFAULT_REALM_ID;
 
 	const onSelect = async (realm: RealmId) => {
 		setOpen(false);

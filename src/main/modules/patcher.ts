@@ -9,6 +9,7 @@ import Logger from '~main/modules/logger';
 import Updater from '~main/modules/updater';
 import {
         DEFAULT_AZEROTHCORE_REALMLIST,
+        DEFAULT_REALM_ID,
         DEFAULT_REALMLIST,
         REALMS
 } from '~common/constants';
@@ -50,7 +51,7 @@ export const patchConfig = async () => {
         } = Preferences.data;
         if (!clientDir) return;
 
-        const realmKey = selectedRealm ?? 'legionnaire_plus';
+        const realmKey = selectedRealm ?? DEFAULT_REALM_ID;
         const realmConfig = REALMS[realmKey];
 
         await Updater.ensureRealmPatchesFor(realmKey);
@@ -270,6 +271,39 @@ export const patchConfig = async () => {
         // from the count (0x464B30), so nothing else is fixed at 10. Harmless on
         // realms whose server still sends at most 10 (CharactersPerRealm).
         writeByte(0x6404f, 0x14);
+
+        // Large-address-aware: lift the 2 GB address-space ceiling to 4 GB.
+        //
+        // The image is 32-bit and stock 3.3.5a leaves IMAGE_FILE_LARGE_ADDRESS_AWARE
+        // (0x0020) clear in its COFF characteristics, so the process is capped at 2 GB
+        // of user address space. Once that fragments the client dies with "Not enough
+        // memory resources are available to process this command", blamed on whichever
+        // allocation happened to land next - M2Shared.cpp:267, MapObjRead.cpp:391,
+        // MapMem.cpp:558 - for requests as small as 88 KB. The HD patches, a high
+        // farclip and wide resolutions make that routine rather than rare.
+        //
+        // Only the flag bit moves. The image is never relocated (no DYNAMICBASE, base
+        // stays 0x400000), so every offset above and every hook address in dinput8.dll
+        // still resolves. The PE checksum is deliberately left stale: the patches above
+        // already invalidate it, and Windows verifies checksums only for drivers and
+        // DLLs in protected processes, never for a user-mode game.
+        //
+        // 64-bit Windows honours the flag directly. Wine and Proton honour it too,
+        // though there the 4 GB is shared with Wine's own 32-bit libraries. On a 32-bit
+        // OS it is inert rather than harmful.
+        //
+        // e_lfanew is read instead of hardcoded, so unlike every patch above this one
+        // writes to a computed offset - hence the signature guard, which keeps a
+        // garbage value from scribbling on an arbitrary part of the image.
+        const peHeaderOffset = buffer.readUInt32LE(0x3c);
+        if (
+                peHeaderOffset > 0 &&
+                peHeaderOffset + 0x18 <= buffer.length &&
+                buffer.readUInt32LE(peHeaderOffset) === 0x00004550 // 'PE\0\0'
+        ) {
+                const characteristics = peHeaderOffset + 0x16;
+                buffer.writeUInt16LE(buffer.readUInt16LE(characteristics) | 0x0020, characteristics);
+        }
 
 	// The byte patches are deterministic, so from the second launch onward the
 	// client is already patched and rewriting it is pure risk for no gain.

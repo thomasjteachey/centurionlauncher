@@ -6,7 +6,9 @@ import { app } from 'electron';
 import {
 	DEFAULT_AZEROTHCORE_REALMLIST,
 	DEFAULT_LAUNCHER_UPDATE_URL,
+	DEFAULT_REALM_ID,
 	DEFAULT_REALMLIST,
+	isRetiredRealm,
 	PUBLIC_REALM_IDS
 } from '~common/constants';
 import {
@@ -41,10 +43,13 @@ const migrateLegacyDefaults = (
 			: json.launcherUpdateUrl
 });
 
+// A retired realm is gone from the realmlist, so it is replaced even in dev mode.
 const enforceRealmVisibility = (prefs: PreferencesData): PreferencesData =>
-	prefs.isDev || PUBLIC_REALM_IDS.includes(prefs.selectedRealm)
+	!isRetiredRealm(prefs.selectedRealm) &&
+	(prefs.isDev ||
+		(PUBLIC_REALM_IDS as readonly string[]).includes(prefs.selectedRealm))
 		? prefs
-		: { ...prefs, selectedRealm: 'legionnaire_plus' };
+		: { ...prefs, selectedRealm: DEFAULT_REALM_ID };
 
 abstract class Preferences {
 	static #data: PreferencesData = enforceRealmVisibility(
