@@ -198,46 +198,76 @@ const fetchFile = async (
 	}
 };
 
+/**
+ * Metadata requests are a few bytes, so an absolute deadline is safe here in a
+ * way it is not for a patch download (see updateFetch). Generous enough to
+ * survive a cold DNS lookup on a machine that just woke its Wi-Fi up.
+ */
+const METADATA_TIMEOUT = 15000;
+
+/**
+ * A short, player-readable reason. The UI shows the thrown message in a single
+ * narrow line, and "Failed to download X" on its own sent people hunting for
+ * missing files on the server when the connection was simply dropped.
+ */
+const describeFetchFailure = (e: unknown) => {
+	if (!(e instanceof Error)) return 'unknown error';
+	const { code } = e as NodeJS.ErrnoException;
+	if (code === 'ENOTFOUND' || code === 'EAI_AGAIN')
+		return 'cannot reach the update server';
+	if (code === 'ECONNREFUSED') return 'connection refused';
+	if (code === 'ECONNRESET' || code === 'EPIPE') return 'connection dropped';
+	if (code === 'ETIMEDOUT' || /timeout/i.test(e.message)) return 'timed out';
+	if (code?.startsWith('CERT_') || code?.startsWith('UNABLE_TO_'))
+		return 'TLS certificate rejected';
+	return e.message;
+};
+
 const fetchSize = async (filePath: string) => {
-        try {
-                const response = await updateFetch(resolvePatchUrl(filePath), {
-                        method: 'HEAD'
-                });
+	try {
+		const response = await updateFetch(resolvePatchUrl(filePath), {
+			method: 'HEAD',
+			timeout: METADATA_TIMEOUT
+		});
 
-                if (!response.ok) {
-                        throw new Error(
-                                `Failed to fetch metadata for ${filePath} (${response.status} ${response.statusText})`
-                        );
-                }
+		if (!response.ok) {
+			throw new Error(
+				`Failed to fetch metadata for ${filePath} (${response.status} ${response.statusText})`
+			);
+		}
 
-                return parseInt(response.headers.get('content-length') ?? '0');
-        } catch (e) {
-                Logger.log(`Failed to download ${filePath}`, 'error', e);
-                throw Error(`Failed to download ${filePath}`);
-        }
+		return parseInt(response.headers.get('content-length') ?? '0');
+	} catch (e) {
+		Logger.log(`Failed to download ${filePath}`, 'error', e);
+		throw Error(`Failed to download ${filePath} - ${describeFetchFailure(e)}`);
+	}
 };
 
 const fetchVersion = async (filePath: string) => {
-        try {
-                const response = await updateFetch(resolvePatchUrl(filePath));
+	try {
+		const response = await updateFetch(resolvePatchUrl(filePath), {
+			timeout: METADATA_TIMEOUT
+		});
 
-                if (!response.ok) {
-                        throw new Error(
-                                `Failed to fetch metadata for ${filePath} (${response.status} ${response.statusText})`
-                        );
-                }
+		if (!response.ok) {
+			throw new Error(
+				`Failed to fetch metadata for ${filePath} (${response.status} ${response.statusText})`
+			);
+		}
 
-                const version = (await response.text()).trim();
+		const version = (await response.text()).trim();
 
-                if (/[/\\<>:"|?*]/.test(version)) {
-                        throw new Error(`Invalid version received for ${filePath}`);
-                }
+		// An intercepting proxy, captive portal or AV web shield answers with an
+		// HTML page instead of the version string; every such page trips this.
+		if (/[/\\<>:"|?*]/.test(version)) {
+			throw new Error(`Invalid version received for ${filePath}`);
+		}
 
-                return version;
-        } catch (e) {
-                Logger.log(`Failed to download ${filePath}`, 'error', e);
-                throw Error(`Failed to download ${filePath}`);
-        }
+		return version;
+	} catch (e) {
+		Logger.log(`Failed to download ${filePath}`, 'error', e);
+		throw Error(`Failed to download ${filePath} - ${describeFetchFailure(e)}`);
+	}
 };
 
 /**
