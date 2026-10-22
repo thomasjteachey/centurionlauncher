@@ -216,7 +216,15 @@ export const FileMap: Record<
 		extractPath: 'Data/enUS',
 		realms: ['barracks_plus', 'centurion', 'centurion_dev']
 	},
-	['patch-4']: { extractPath: 'Data', realms: ['legionnaire_plus'] },
+	// Rider seats for the stock hunter-pet models (Boar, cats, Bear, Raptor,
+	// Hyena, ...), so Beast Rider shows the hunter on the pet with HD Creatures
+	// off. Stock Boar.m2 has no seat at all, and the client hides a rider whose
+	// mount has none - the hunter turns into a riderless pig. '4' sorts below
+	// patch-F, so with HD Creatures on the HD pack's own fixed models still win.
+	['patch-4']: {
+		extractPath: 'Data',
+		realms: ['legionnaire_plus', 'centurion', 'centurion_dev']
+	},
 	// The production art base. patch-Z used to carry all of it; it is now the
 	// small dev-only delta layered above this, so a texture save no longer
 	// makes every dev redownload 700MB. On patch day the delta is merged down
