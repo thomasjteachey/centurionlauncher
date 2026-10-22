@@ -150,6 +150,17 @@ export const FileMap: Record<
 		 * older archive that shipped under the same name on disk stops loading.
 		 */
 		removeWhenUnused?: string[];
+		/**
+		 * The files the archive installs into extractPath, under their names on
+		 * disk. The launcher records what it extracts, but a client can hold a
+		 * copy it has no record of: one installed by an older launcher, or left
+		 * behind after a force update with the patch turned off. These names find
+		 * it anyway. While the patch is not in use they are moved out of the
+		 * client, and while it is in use with nothing recorded they are what the
+		 * client is checked for. The key is no use for either: hd-creatures
+		 * installs patch-F.MPQ.
+		 */
+		files?: string[];
 	}
 > = {
 	['addons']: { extractPath: 'Interface/Addons' },
@@ -241,35 +252,46 @@ export const FileMap: Record<
 			'townsendboys'
 		]
 	},
+	// The client loads every MPQ in Data whether its toggle is on or not, and the
+	// HD packs carry whole DBCs that outrank the realm's (patch-F's
+	// CreatureDisplayInfo beats patch-enUS-A's, F=26 > A=21). A copy left behind
+	// with the toggle off therefore hides every creature, spell visual or map
+	// added since it was built - for that one player only. `files` names each
+	// pack's archives so turning it off moves them out even with no record.
 	['hd-creatures']: {
 		extractPath: 'Data',
 		optional: true,
 		label: 'HD Creatures',
-		description: 'Higher resolution retail creature models'
+		description: 'Higher resolution retail creature models',
+		files: ['patch-F.MPQ']
 	},
 	['hd-textures']: {
 		extractPath: 'Data',
 		optional: true,
 		label: 'HD Textures',
-		description: 'Higher resolution retail textures'
+		description: 'Higher resolution retail textures',
+		files: ['patch-T.MPQ']
 	},
 	['hd-spells']: {
 		extractPath: 'Data',
 		optional: true,
 		label: 'HD Spells',
-		description: 'Higher resolution retail spell visuals'
+		description: 'Higher resolution retail spell visuals',
+		files: ['patch-G.MPQ', 'patch-H.MPQ']
 	},
 	['hd-bgs']: {
 		extractPath: 'Data',
 		optional: true,
 		label: 'HD Battlegrounds',
-		description: 'Higher detail retail battleground maps'
+		description: 'Higher detail retail battleground maps',
+		files: ['patch-U.MPQ']
 	},
 	['hd-misc']: {
 		extractPath: 'Data',
 		optional: true,
 		label: 'HD Interface',
-		description: 'Shadowlands style user interface'
+		description: 'Shadowlands style user interface',
+		files: ['patch-L.MPQ']
 	},
 	// Reznik's world art (patch-Y.MPQ), lifted from his client patches: his
 	// versions of World, Tileset, Dungeons and Environments textures, his
