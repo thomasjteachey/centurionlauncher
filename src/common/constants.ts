@@ -243,6 +243,13 @@ export const FileMap: Record<
 		migrateFrom: 'patch-Y'
 	},
 	['patch-Z']: { extractPath: 'Data', devFile: 'itemforge/patch-Z-test' },
+	// Summoner's Rift's music: the MP3 under Sound\Music\Centurion and a
+	// SoundEntries.dbc with its row (18690), which patch-enUS-A's ZoneMusic 1690
+	// and AreaTable 30610 point at. Without this archive the Rift is silent.
+	// SoundEntries is the HD packs' copy (patch-F and patch-G carry identical
+	// ones) plus that row, and 'N' outranks both, so a later SoundEntries change
+	// in F or G has to be copied into this archive too or it will not show.
+	['patch-N']: { extractPath: 'Data', realms: ['centurion', 'centurion_dev'] },
 	// The in-instance floor maps. Barracks Plus was added 2026-09-04: it had
 	// never been on this list, because when the patch was introduced B+ still
 	// shared 'barracks' patches, and the split onto its own patch-enUS-A left
